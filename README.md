@@ -1,4 +1,4 @@
-<p align="center"><img src="web/public/favicon.svg" width="96" alt="RustKeep logo"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/Veucci/RustKeep/master/web/public/favicon.svg" width="96" alt="RustKeep logo"></p>
 
 # RustKeep
 
@@ -11,32 +11,32 @@ Self-hosted notes, files, API key vault, reminders and lightweight project board
 
 **Dashboard** - summary of notes, projects, files and reminders
 
-![Dashboard](assets/screenshots/dashboard.png)
+![Dashboard](https://raw.githubusercontent.com/Veucci/RustKeep/master/assets/screenshots/dashboard.png)
 
 **Dashboard in dark mode**
 
-![Dashboard in dark mode](assets/screenshots/dashboard-dark.png)
+![Dashboard in dark mode](https://raw.githubusercontent.com/Veucci/RustKeep/master/assets/screenshots/dashboard-dark.png)
 
 **Markdown editor** - split view with live preview, saved as you type
 
-![Markdown editor](assets/screenshots/editor.png)
+![Markdown editor](https://raw.githubusercontent.com/Veucci/RustKeep/master/assets/screenshots/editor.png)
 
 **Project board** - custom columns, due dates and descriptions on every card
 
-![Project board](assets/screenshots/kanban.png)
+![Project board](https://raw.githubusercontent.com/Veucci/RustKeep/master/assets/screenshots/kanban.png)
 
 <table>
   <tr>
-    <td><b>Notes</b><br><img src="assets/screenshots/notes.png" alt="Notes"></td>
-    <td><b>Projects</b><br><img src="assets/screenshots/projects.png" alt="Projects"></td>
+    <td><b>Notes</b><br><img src="https://raw.githubusercontent.com/Veucci/RustKeep/master/assets/screenshots/notes.png" alt="Notes"></td>
+    <td><b>Projects</b><br><img src="https://raw.githubusercontent.com/Veucci/RustKeep/master/assets/screenshots/projects.png" alt="Projects"></td>
   </tr>
   <tr>
-    <td><b>Files</b><br><img src="assets/screenshots/files.png" alt="Files"></td>
-    <td><b>Vault (PIN protected)</b><br><img src="assets/screenshots/vault.png" alt="Vault"></td>
+    <td><b>Files</b><br><img src="https://raw.githubusercontent.com/Veucci/RustKeep/master/assets/screenshots/files.png" alt="Files"></td>
+    <td><b>Vault (PIN protected)</b><br><img src="https://raw.githubusercontent.com/Veucci/RustKeep/master/assets/screenshots/vault.png" alt="Vault"></td>
   </tr>
   <tr>
-    <td><b>Reminders</b><br><img src="assets/screenshots/reminders.png" alt="Reminders"></td>
-    <td><b>Sign in</b><br><img src="assets/screenshots/login.png" alt="Sign in"></td>
+    <td><b>Reminders</b><br><img src="https://raw.githubusercontent.com/Veucci/RustKeep/master/assets/screenshots/reminders.png" alt="Reminders"></td>
+    <td><b>Sign in</b><br><img src="https://raw.githubusercontent.com/Veucci/RustKeep/master/assets/screenshots/login.png" alt="Sign in"></td>
   </tr>
 </table>
 
@@ -53,6 +53,15 @@ The server is built to stay small:
 Signing in or unlocking the PIN briefly adds about 7 MB for password hashing (Argon2id), then drops back.
 
 ## Run with Docker
+
+The image is published on [Docker Hub](https://hub.docker.com/r/veucci/rustkeep):
+
+```bash
+docker pull veucci/rustkeep
+docker run -p 8080:8080 -v rustkeep-data:/data --env-file .env veucci/rustkeep
+```
+
+To build it yourself instead:
 
 ```bash
 docker build -t rustkeep .
@@ -96,4 +105,4 @@ Built by [Efe Ozkan](https://efeozkan.com.tr). For questions, ideas or collabora
 
 ## License
 
-[MIT](LICENSE) - free to use, modify and distribute, including commercially.
+[MIT](https://github.com/Veucci/RustKeep/blob/master/LICENSE) - free to use, modify and distribute, including commercially.
