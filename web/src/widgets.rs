@@ -304,3 +304,32 @@ pub fn ListSkeleton(#[prop(default = 4)] rows: usize) -> impl IntoView {
         })
         .collect_view()
 }
+
+#[component]
+pub fn Logo(#[prop(into, optional)] class: String) -> impl IntoView {
+    view! {
+        <svg
+            class=class
+            viewBox="0 0 64 64"
+            fill="none"
+            stroke="currentColor"
+            stroke-linejoin="round"
+            role="img"
+            aria-label="RustKeep"
+        >
+            <path d="M24 55H15a4 4 0 0 1-4-4V13a4 4 0 0 1 4-4h21l12 12v5a11 11 0 0 1-11 11h-4l17.5 18.5" stroke-width="7" />
+            <path d="M36 9v8a4 4 0 0 0 4 4h8z" fill="currentColor" stroke-width="2" />
+            <path d="M20 19h8M20 26h11M20 33h5" stroke-width="5" stroke-linecap="round" />
+        </svg>
+    }
+}
+
+#[component]
+pub fn LogoTile(#[prop(into, optional)] class: String) -> impl IntoView {
+    let class = format!("flex justify-center items-center rounded-lg bg-primary text-primary-foreground shrink-0 {class}");
+    view! {
+        <div class=class>
+            <Logo class="size-[70%]" />
+        </div>
+    }
+}

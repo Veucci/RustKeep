@@ -6,6 +6,7 @@ use serde_json::json;
 use crate::api::{self, AutoSave, client_id, next_rev};
 use crate::components::ui::theme_toggle::ThemeToggle;
 use crate::pages::editor::{MdEditor, SaveBadge};
+use crate::widgets::LogoTile;
 
 #[derive(Clone, Deserialize)]
 struct PublicNote {
@@ -30,7 +31,9 @@ pub fn SharedNote() -> impl IntoView {
     view! {
         <div class="flex flex-col gap-4 p-4 mx-auto max-w-6xl md:p-8">
             <div class="flex gap-2 items-center">
-                <span class="flex-1 font-bold tracking-tight">"RustKeep - shared note"</span>
+                <LogoTile class="size-8" />
+                <span class="font-semibold tracking-tight">"RustKeep"</span>
+                <span class="flex-1 text-sm text-muted-foreground">"Shared note"</span>
                 <ThemeToggle />
             </div>
             {move || {

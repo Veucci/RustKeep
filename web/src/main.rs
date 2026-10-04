@@ -8,7 +8,7 @@ mod pages;
 mod widgets;
 
 use icons::{
-    Archive, Bell, Folder, KeyRound, LayoutDashboard, Lock, LogOut, Menu, Notebook, NotebookPen, PanelLeft, SquareKanban,
+    Archive, Bell, Folder, KeyRound, LayoutDashboard, Lock, LogOut, Menu, Notebook, PanelLeft, SquareKanban,
     Trash2,
 };
 use leptos::prelude::*;
@@ -28,7 +28,7 @@ use crate::components::ui::sidenav::{
 };
 use crate::components::ui::theme_toggle::ThemeToggle;
 use crate::pages::notes::View;
-use crate::widgets::{Toast, Ui, use_ui};
+use crate::widgets::{LogoTile, Toast, Ui, use_ui};
 
 fn main() {
     std::panic::set_hook(Box::new(|info| web_sys::console::error_1(&info.to_string().into())));
@@ -113,9 +113,7 @@ fn NavGroup(label: &'static str, children: Children) -> impl IntoView {
 fn Brand() -> impl IntoView {
     view! {
         <div class="flex gap-2 items-center p-2">
-            <div class="flex justify-center items-center rounded-lg size-8 bg-sidenav-primary text-sidenav-primary-foreground">
-                <NotebookPen class="size-4" />
-            </div>
+            <LogoTile class="size-8" />
             <div class="flex flex-col leading-tight">
                 <span class="text-sm font-semibold">"RustKeep"</span>
                 <span class="text-xs text-muted-foreground">"Personal workspace"</span>

@@ -9,14 +9,18 @@ use crate::components::ui::button::Button;
 use crate::components::ui::card::{Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle};
 use crate::components::ui::input::{Input, InputType};
 use crate::components::ui::label::Label;
-use crate::widgets::use_ui;
+use crate::widgets::{LogoTile, use_ui};
 
 #[component]
 fn AuthCard(#[prop(into)] title: String, #[prop(into)] subtitle: String, children: Children) -> impl IntoView {
     view! {
         <div class="flex justify-center items-center p-4 min-h-screen">
-            <Card class="w-full max-w-sm">
+            <Card class="w-full max-w-sm page-enter">
                 <CardHeader>
+                    <div class="flex gap-2 items-center mb-3">
+                        <LogoTile class="size-9" />
+                        <span class="text-lg font-semibold tracking-tight">"RustKeep"</span>
+                    </div>
                     <CardTitle class="text-xl">{title}</CardTitle>
                     <CardDescription>{subtitle}</CardDescription>
                 </CardHeader>
@@ -44,7 +48,7 @@ pub fn Login() -> impl IntoView {
         });
     };
     view! {
-        <AuthCard title="RustKeep" subtitle="Sign in to your account">
+        <AuthCard title="Welcome back" subtitle="Sign in to your account">
             <form on:submit=submit>
                 <CardContent class="flex flex-col gap-3">
                     <Label>"Email"</Label>

@@ -1,3 +1,5 @@
+<p align="center"><img src="web/public/favicon.svg" width="96" alt="RustKeep logo"></p>
+
 # RustKeep
 
 Self-hosted notes, files, API key vault, reminders and lightweight project boards.
