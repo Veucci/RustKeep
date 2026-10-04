@@ -1,0 +1,8 @@
+target
+web/target
+web/node_modules
+web/dist
+web/style/output.css
+data
+.git
+.env
