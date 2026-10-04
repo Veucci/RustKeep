@@ -77,7 +77,8 @@ pub async fn upload(app: St, user: User, Query(q): Query<ListQ>, mut mp: Multipa
         let id = uuid();
         app.db
             .execute(
-                "INSERT INTO files (id, user_id, project_id, name, mime, size, key) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO files (id, user_id, project_id, name, mime, size, key) \
+                 VALUES (?1, ?2, (SELECT id FROM projects WHERE id = ?3 AND user_id = ?2), ?4, ?5, ?6, ?7)",
                 params![id.clone(), user.id, q.project, name.clone(), mime, size, key],
             )
             .await?;

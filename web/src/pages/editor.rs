@@ -149,13 +149,13 @@ fn EditorBody(note: Note) -> impl IntoView {
                         <Share2 />
                         "Share"
                     </Button>
+                    <Button variant=ButtonVariant::Outline size=ButtonSize::Sm on:click=toggle_archive>
+                        {move || if archived.get() { view! { <ArchiveRestore /> "Unarchive" }.into_any() } else { view! { <Archive /> "Archive" }.into_any() }}
+                    </Button>
                 </Show>
                 <Button variant=ButtonVariant::Outline size=ButtonSize::Sm on:click=move |_| remind_open.set(true)>
                     <Bell />
                     "Remind"
-                </Button>
-                <Button variant=ButtonVariant::Outline size=ButtonSize::Sm on:click=toggle_archive>
-                    {move || if archived.get() { view! { <ArchiveRestore /> "Unarchive" }.into_any() } else { view! { <Archive /> "Archive" }.into_any() }}
                 </Button>
                 <Button variant=ButtonVariant::Outline size=ButtonSize::Sm on:click=trash>
                     <Trash2 />
@@ -166,7 +166,7 @@ fn EditorBody(note: Note) -> impl IntoView {
         </div>
         <ShareDialog open=share_open api_path=format!("/api/notes/{}/share", id.get_value()) link_prefix="/s/" token=share_token />
         <Modal open=remind_open title="Add reminder">
-            <ReminderForm note_id=Some(id.get_value()) title=title.get_untracked() on_done=Callback::new(move |_| remind_open.set(false)) />
+            <ReminderForm note_id=Some(id.get_value()) title=if secret { String::new() } else { title.get_untracked() } on_done=Callback::new(move |_| remind_open.set(false)) />
         </Modal>
     }
 }

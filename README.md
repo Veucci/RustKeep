@@ -56,7 +56,7 @@ Signing in or unlocking the PIN briefly adds about 7 MB for password hashing (Ar
 
 ```bash
 docker build -t rustkeep .
-docker run -p 8080:8080 -v rustkeep-data:/data -e PUBLIC_URL=https://example.com rustkeep
+docker run -p 8080:8080 -v rustkeep-data:/data --env-file .env rustkeep
 ```
 
 ## Local development
@@ -79,7 +79,7 @@ Copy `.env.example` to `.env`. The server loads `.env` from the working director
 | `STATIC_DIR` | `web/dist` | Built client |
 | `TURSO_DATABASE_URL` | `$DATA_DIR/rustkeep.db` | `libsql://...` for Turso, otherwise a local file path |
 | `TURSO_AUTH_TOKEN` | empty | Turso token |
-| `SECRET_KEY` | generated file | Encryption key for vault entries and secret notes |
+| `SECRET_KEY` | generated file (required with Turso) | Encryption key for vault entries and secret notes |
 | `RESEND_API_KEY` | empty | Resend key; without it emails are printed to stdout |
 | `MAIL_FROM` | `RustKeep <noreply@efeozkan.com.tr>` | Sender address (must be a verified Resend domain) |
 | `VERIFY_EMAIL` | `example@efeozkan.com.tr` | Receives new-user approval requests |

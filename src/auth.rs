@@ -9,12 +9,14 @@ use libsql::params;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::util::{AppError, Res, bad, cookie, err, exec, hash, one, token, verify};
+use crate::util::{AppError, Res, all, bad, cookie, err, exec, hash, one, token, verify};
 use crate::{App, St};
 
 const COOKIE: &str = "rk_session";
 const SESSION_SECS: i64 = 30 * 86400;
 const PIN_SECS: i64 = 15 * 60;
+const LOGIN_MAX: u32 = 10;
+const LOGIN_WINDOW: i64 = 15 * 60;
 
 pub struct User {
     pub id: i64,
@@ -78,6 +80,15 @@ struct LoginRow {
     approved: i64,
 }
 
+fn login_allowed(app: &App, user_id: i64) -> bool {
+    let now = unix_now();
+    let mut attempts = app.login_attempts.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    attempts.retain(|_, (_, start)| now - *start < LOGIN_WINDOW);
+    let entry = attempts.entry(user_id).or_insert((0, now));
+    entry.0 += 1;
+    entry.0 <= LOGIN_MAX
+}
+
 pub async fn login(app: St, Json(r): Json<LoginReq>) -> Res<impl IntoResponse> {
     let invalid = || err(StatusCode::UNAUTHORIZED, "Invalid email or password");
     let u: LoginRow = one(
@@ -87,9 +98,13 @@ pub async fn login(app: St, Json(r): Json<LoginReq>) -> Res<impl IntoResponse> {
     )
     .await
     .map_err(|_| invalid())?;
+    if !login_allowed(&app, u.id) {
+        return Err(err(StatusCode::TOO_MANY_REQUESTS, "Too many sign-in attempts, try again later"));
+    }
     if !verify(&r.password, &u.pass) {
         return Err(invalid());
     }
+    app.login_attempts.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&u.id);
     if u.approved == 0 {
         return Err(err(StatusCode::FORBIDDEN, "Your account has not been approved yet"));
     }
@@ -155,26 +170,34 @@ pub struct UnlockReq {
 #[derive(Deserialize)]
 struct PinRow {
     pin: Option<String>,
-    pin_block: i64,
+}
+
+#[derive(Deserialize)]
+struct PinAttempt {
+    pin: String,
 }
 
 pub async fn unlock(app: St, user: User, Json(r): Json<UnlockReq>) -> Res<Json<Value>> {
-    let row: PinRow = one(&app.db, "SELECT pin, pin_block FROM users WHERE id = ?1", params![user.id]).await?;
-    if row.pin_block > unix_now() {
-        return Err(err(StatusCode::TOO_MANY_REQUESTS, "Too many failed attempts, wait 5 minutes"));
+    let row: PinRow = one(&app.db, "SELECT pin FROM users WHERE id = ?1", params![user.id]).await?;
+    if row.pin.is_none() {
+        return Err(bad("Set a PIN first"));
     }
-    let Some(pin) = row.pin else { return Err(bad("Set a PIN first")) };
-    if !verify(&r.pin, &pin) {
-        app.db
-            .execute(
-                "UPDATE users SET pin_fails = (pin_fails + 1) % 5, \
-                 pin_block = CASE WHEN pin_fails >= 4 THEN unixepoch() + 300 ELSE pin_block END WHERE id = ?1",
-                params![user.id],
-            )
-            .await?;
+    let attempt: Option<PinAttempt> = all(
+        &app.db,
+        "UPDATE users SET pin_fails = (pin_fails + 1) % 5, \
+         pin_block = CASE WHEN pin_fails >= 4 THEN unixepoch() + 300 ELSE pin_block END \
+         WHERE id = ?1 AND pin IS NOT NULL AND pin_block <= unixepoch() RETURNING pin",
+        params![user.id],
+    )
+    .await?
+    .pop();
+    let Some(attempt) = attempt else {
+        return Err(err(StatusCode::TOO_MANY_REQUESTS, "Too many failed attempts, wait 5 minutes"));
+    };
+    if !verify(&r.pin, &attempt.pin) {
         return Err(err(StatusCode::UNAUTHORIZED, "Wrong PIN"));
     }
-    app.db.execute("UPDATE users SET pin_fails = 0 WHERE id = ?1", params![user.id]).await?;
+    app.db.execute("UPDATE users SET pin_fails = 0, pin_block = 0 WHERE id = ?1", params![user.id]).await?;
     app.db
         .execute("UPDATE sessions SET pin_until = unixepoch() + ?1 WHERE token = ?2", params![PIN_SECS, user.token])
         .await?;

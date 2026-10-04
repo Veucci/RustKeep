@@ -4,7 +4,7 @@ use libsql::params;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::St;
+use crate::{App, St};
 use crate::auth::User;
 use crate::util::{Res, all, bad, exec, one, token, uuid};
 
@@ -32,20 +32,38 @@ pub async fn list(app: St, user: User, Query(q): Query<ListQ>) -> Res<Json<Vec<N
     let filter = match q.view.as_deref() {
         Some("archived") => "archived = 1 AND trashed_at IS NULL AND secret = 0",
         Some("trash") => "trashed_at IS NOT NULL AND secret = 0",
-        Some("secret") => "secret = 1 AND trashed_at IS NULL",
+        Some("secret") => return Ok(Json(list_secret(&app, &user, q.q).await?)),
         Some("project") => "trashed_at IS NULL AND secret = 0",
         _ => "archived = 0 AND trashed_at IS NULL AND secret = 0",
     };
-    if q.view.as_deref() == Some("secret") {
-        user.need_pin()?;
-    }
     let sql = format!(
         "SELECT id, title, project_id, archived, updated, share_token FROM notes WHERE user_id = ?1 AND {filter} \
-         AND (?2 IS NULL OR project_id = ?2) AND (?3 IS NULL OR title LIKE ?3 OR (secret = 0 AND body LIKE ?3)) \
+         AND (?2 IS NULL OR project_id = ?2) AND (?3 IS NULL OR title LIKE ?3 OR body LIKE ?3) \
          ORDER BY updated DESC"
     );
     let like = q.q.filter(|s| !s.is_empty()).map(|s| format!("%{s}%"));
     Ok(Json(all(&app.db, &sql, params![user.id, q.project, like]).await?))
+}
+
+fn open_title(app: &App, title: String) -> String {
+    app.crypto.open(&title).unwrap_or(title)
+}
+
+async fn list_secret(app: &App, user: &User, search: Option<String>) -> Res<Vec<NoteItem>> {
+    user.need_pin()?;
+    let rows: Vec<NoteItem> = all(
+        &app.db,
+        "SELECT id, title, project_id, archived, updated, share_token FROM notes \
+         WHERE user_id = ?1 AND secret = 1 AND trashed_at IS NULL ORDER BY updated DESC",
+        params![user.id],
+    )
+    .await?;
+    let needle = search.unwrap_or_default().to_lowercase();
+    Ok(rows
+        .into_iter()
+        .map(|n| NoteItem { title: open_title(app, n.title), ..n })
+        .filter(|n| n.title.to_lowercase().contains(&needle))
+        .collect())
 }
 
 #[derive(Serialize, Deserialize)]
@@ -72,6 +90,7 @@ pub async fn get(app: St, user: User, Path(id): Path<String>) -> Res<Json<Note>>
     .await?;
     if n.secret == 1 {
         user.need_pin()?;
+        n.title = open_title(&app, n.title);
         n.body = app.crypto.open(&n.body)?;
     }
     Ok(Json(n))
@@ -87,17 +106,18 @@ pub struct CreateReq {
 }
 
 pub async fn create(app: St, user: User, Json(r): Json<CreateReq>) -> Res<Json<Value>> {
-    let body = if r.secret {
+    let (title, body) = if r.secret {
         user.need_pin()?;
-        app.crypto.seal("")
+        (app.crypto.seal(&r.title), app.crypto.seal(""))
     } else {
-        String::new()
+        (r.title, String::new())
     };
     let id = uuid();
     app.db
         .execute(
-            "INSERT INTO notes (id, user_id, title, body, project_id, secret) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![id.clone(), user.id, r.title, body, r.project_id, r.secret as i64],
+            "INSERT INTO notes (id, user_id, title, body, project_id, secret) \
+             VALUES (?1, ?2, ?3, ?4, (SELECT id FROM projects WHERE id = ?5 AND user_id = ?2), ?6)",
+            params![id.clone(), user.id, title, body, r.project_id, r.secret as i64],
         )
         .await?;
     Ok(Json(json!({ "id": id })))
@@ -119,18 +139,19 @@ struct SecretFlag {
 
 pub async fn update(app: St, user: User, Path(id): Path<String>, Json(r): Json<UpdateReq>) -> Res<Json<Value>> {
     let f: SecretFlag = one(&app.db, "SELECT secret FROM notes WHERE id = ?1 AND user_id = ?2", params![id.clone(), user.id]).await?;
-    let body = if f.secret == 1 {
+    let (title, body) = if f.secret == 1 {
         user.need_pin()?;
-        app.crypto.seal(&r.body)
+        (app.crypto.seal(&r.title), app.crypto.seal(&r.body))
     } else {
-        r.body
+        (r.title, r.body)
     };
     let n = app
         .db
         .execute(
-            "UPDATE notes SET title = ?1, body = ?2, project_id = ?3, rev = ?4, rev_client = ?7, updated = unixepoch() \
+            "UPDATE notes SET title = ?1, body = ?2, project_id = (SELECT id FROM projects WHERE id = ?3 AND user_id = ?6), \
+             rev = ?4, rev_client = ?7, updated = unixepoch() \
              WHERE id = ?5 AND user_id = ?6 AND (rev_client IS NOT ?7 OR rev < ?4)",
-            params![r.title, body, r.project_id, r.rev, id, user.id, r.client],
+            params![title, body, r.project_id, r.rev, id, user.id, r.client],
         )
         .await?;
     Ok(Json(json!({ "saved": n > 0 })))
@@ -144,7 +165,7 @@ pub async fn action(app: St, user: User, Path((id, action)): Path<(String, Strin
         "restore" => "trashed_at = NULL",
         _ => return Err(bad("Invalid action")),
     };
-    let sql = format!("UPDATE notes SET {set}, updated = unixepoch() WHERE id = ?1 AND user_id = ?2");
+    let sql = format!("UPDATE notes SET {set}, updated = unixepoch() WHERE id = ?1 AND user_id = ?2 AND secret = 0");
     exec(&app.db, &sql, params![id, user.id]).await?;
     Ok(Json(json!({ "ok": true })))
 }

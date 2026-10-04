@@ -12,8 +12,9 @@ mod templates;
 mod util;
 mod vault;
 
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
@@ -35,6 +36,7 @@ pub struct App {
     pub db: libsql::Connection,
     pub cfg: Config,
     pub crypto: util::Crypto,
+    pub login_attempts: Mutex<HashMap<i64, (u32, i64)>>,
     _database: libsql::Database,
 }
 
@@ -97,6 +99,8 @@ fn secret_key(data_dir: &std::path::Path) -> String {
     if let Some(k) = env("SECRET_KEY") {
         return k;
     }
+    let remote = env("TURSO_DATABASE_URL").is_some_and(|u| u.contains("://"));
+    assert!(!remote, "SECRET_KEY is required when using a remote database");
     let path = data_dir.join("secret.key");
     std::fs::read_to_string(&path).unwrap_or_else(|_| {
         let k = util::token();
@@ -162,8 +166,8 @@ async fn main() {
         secure_cookie: public_url.starts_with("https://"),
         public_url: public_url.trim_end_matches('/').to_owned(),
         resend_key: env("RESEND_API_KEY"),
-        mail_from: env("MAIL_FROM").unwrap_or_else(|| "RustKeep <noreply@efeozkan.com.tr>".into()),
-        verify_email: env("VERIFY_EMAIL").unwrap_or_else(|| "example@efeozkan.com.tr".into()),
+        mail_from: env("MAIL_FROM").expect("MAIL_FROM is required"),
+        verify_email: env("VERIFY_EMAIL").expect("VERIFY_EMAIL is required"),
         data_dir,
     };
 
@@ -184,7 +188,8 @@ async fn main() {
 
     let port = env("PORT").unwrap_or_else(|| "8080".into());
     let base = cfg.base.clone();
-    let app = Arc::new(App { db, crypto: util::Crypto::new(&secret_key(&cfg.data_dir)), cfg, _database: database });
+    let crypto = util::Crypto::new(&secret_key(&cfg.data_dir));
+    let app = Arc::new(App { db, crypto, cfg, login_attempts: Mutex::default(), _database: database });
     tokio::spawn(reminders::run(app.clone()));
 
     let routes = api().route("/", get(page.clone())).fallback_service(spa).with_state(app);

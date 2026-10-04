@@ -1,8 +1,19 @@
 use pulldown_cmark::{CowStr, Event, Options, Parser, Tag, html};
 
-fn safe_url(u: CowStr<'_>) -> CowStr<'_> {
-    let l = u.trim().to_ascii_lowercase();
-    if ["javascript:", "vbscript:", "data:"].iter().any(|s| l.starts_with(s)) { "#".into() } else { u }
+fn scheme(u: &str) -> Option<String> {
+    let (scheme, _) = u.split_once(':')?;
+    (!scheme.contains(['/', '?', '#'])).then(|| scheme.trim().to_ascii_lowercase())
+}
+
+fn safe_link(u: CowStr<'_>) -> CowStr<'_> {
+    match scheme(&u).as_deref() {
+        None | Some("http" | "https" | "mailto") => u,
+        _ => "#".into(),
+    }
+}
+
+fn safe_image(u: CowStr<'_>) -> CowStr<'_> {
+    if scheme(&u).is_none() && !u.trim_start().starts_with("//") { u } else { "#".into() }
 }
 
 pub fn render(src: &str) -> String {
@@ -10,10 +21,10 @@ pub fn render(src: &str) -> String {
     let events = Parser::new_ext(src, opts).map(|ev| match ev {
         Event::Html(h) | Event::InlineHtml(h) => Event::Text(h),
         Event::Start(Tag::Link { link_type, dest_url, title, id }) => {
-            Event::Start(Tag::Link { link_type, dest_url: safe_url(dest_url), title, id })
+            Event::Start(Tag::Link { link_type, dest_url: safe_link(dest_url), title, id })
         }
         Event::Start(Tag::Image { link_type, dest_url, title, id }) => {
-            Event::Start(Tag::Image { link_type, dest_url: safe_url(dest_url), title, id })
+            Event::Start(Tag::Image { link_type, dest_url: safe_image(dest_url), title, id })
         }
         e => e,
     });
@@ -32,5 +43,14 @@ mod tests {
         assert!(!out.contains("<script>"));
         assert!(out.contains("href=\"#\""));
         assert!(out.contains("<strong>b</strong>"));
+    }
+
+    #[test]
+    fn allowlists_urls() {
+        let out = render("[a](java&#9;script:x) [b](https://x.dev) [c](/notes/1) ![d](https://x.dev/i.png) ![e](//x.dev/i.png) ![f](/api/files/1/raw)");
+        assert_eq!(out.matches("href=\"#\"").count(), 1);
+        assert!(out.contains("href=\"https://x.dev\"") && out.contains("href=\"/notes/1\""));
+        assert_eq!(out.matches("src=\"#\"").count(), 2);
+        assert!(out.contains("src=\"/api/files/1/raw\""));
     }
 }

@@ -88,14 +88,14 @@ pub async fn update(app: St, user: User, Path(id): Path<i64>, Json(r): Json<Proj
 
 pub async fn remove(app: St, user: User, Path(id): Path<i64>) -> Res<Json<Value>> {
     exec(&app.db, "DELETE FROM projects WHERE id = ?1 AND user_id = ?2", params![id, user.id]).await?;
-    app.db
-        .execute_batch(&format!(
-            "DELETE FROM tasks WHERE project_id = {id}; \
-             DELETE FROM board_columns WHERE project_id = {id}; \
-             UPDATE notes SET project_id = NULL WHERE project_id = {id}; \
-             UPDATE files SET project_id = NULL WHERE project_id = {id};"
-        ))
-        .await?;
+    for sql in [
+        "DELETE FROM tasks WHERE project_id = ?1",
+        "DELETE FROM board_columns WHERE project_id = ?1",
+        "UPDATE notes SET project_id = NULL WHERE project_id = ?1",
+        "UPDATE files SET project_id = NULL WHERE project_id = ?1",
+    ] {
+        app.db.execute(sql, params![id]).await?;
+    }
     Ok(Json(json!({ "ok": true })))
 }
 

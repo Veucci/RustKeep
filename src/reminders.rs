@@ -75,8 +75,13 @@ async fn tick(app: &App) -> Res<()> {
     for d in due {
         let link = app.url(&d.note_id.map(|id| format!("/notes/{id}")).unwrap_or_default());
         let html = format!("<h2>{}</h2><p><a href=\"{link}\">Open in RustKeep</a></p>", esc(&d.title));
-        if app.mail(&d.email, &format!("Reminder: {}", d.title), html).await {
-            app.db.execute("UPDATE reminders SET sent = 1 WHERE id = ?1", params![d.id]).await?;
+        let sql = if app.mail(&d.email, &format!("Reminder: {}", d.title), html).await {
+            "UPDATE reminders SET sent = 1 WHERE id = ?1"
+        } else {
+            "UPDATE reminders SET remind_at = unixepoch() + 600 WHERE id = ?1"
+        };
+        if let Err(e) = app.db.execute(sql, params![d.id]).await {
+            eprintln!("reminder {} update failed: {e}", d.id);
         }
     }
     Ok(())

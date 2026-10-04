@@ -18,6 +18,8 @@ pub struct RegisterReq {
     password: String,
 }
 
+const MAX_PENDING: i64 = 10;
+
 struct Meta {
     ip: String,
     agent: String,
@@ -44,8 +46,8 @@ fn client_meta(h: &HeaderMap, addr: SocketAddr) -> Meta {
     }
 }
 
-async fn exists(app: &App, sql: &str, email: &str) -> Res<bool> {
-    Ok(app.db.query(sql, params![email]).await?.next().await?.is_some())
+async fn exists(app: &App, sql: &str, value: impl Into<libsql::Value>) -> Res<bool> {
+    Ok(app.db.query(sql, [value.into()]).await?.next().await?.is_some())
 }
 
 const APPLICANT: &str = "SELECT u.id AS user_id, u.name, u.email, r.ip, r.agent, r.language, r.origin, \
@@ -66,10 +68,13 @@ pub async fn register(
     if !email.contains('@') || r.name.trim().is_empty() || r.password.len() < 8 {
         return Err(bad("Provide a valid email, a name and a password of at least 8 characters"));
     }
-    if exists(&app, "SELECT 1 FROM blocked_emails WHERE email = ?1", &email).await? {
+    if exists(&app, "SELECT 1 WHERE (SELECT COUNT(*) FROM users WHERE approved = 0) >= ?1", MAX_PENDING).await? {
+        return Err(err(StatusCode::TOO_MANY_REQUESTS, "Too many pending requests, try again later"));
+    }
+    if exists(&app, "SELECT 1 FROM blocked_emails WHERE email = ?1", email.as_str()).await? {
         return Err(err(StatusCode::FORBIDDEN, "This email address cannot be used to register"));
     }
-    if exists(&app, "SELECT 1 FROM users WHERE email = ?1", &email).await? {
+    if exists(&app, "SELECT 1 FROM users WHERE email = ?1", email.as_str()).await? {
         return Err(err(StatusCode::CONFLICT, "This email is already registered"));
     }
     let t = token();

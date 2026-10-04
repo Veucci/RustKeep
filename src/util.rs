@@ -171,7 +171,7 @@ mod tests {
 
     #[test]
     fn password() {
-        let h = hash("parola123");
-        assert!(verify("parola123", &h) && !verify("x", &h));
+        let h = hash("password123");
+        assert!(verify("password123", &h) && !verify("x", &h));
     }
 }
