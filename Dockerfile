@@ -24,7 +24,7 @@ COPY web ./
 RUN touch src/main.rs && trunk build --release && gzip -k9 dist/*.wasm dist/*.js dist/*.css
 
 FROM alpine:3.22
-RUN apk add --no-cache ca-certificates && mkdir /data
+RUN apk add --no-cache ca-certificates && mkdir -p /data /app && ln -s /data /app/data
 COPY --from=server /app/target/release/rustkeep /usr/local/bin/rustkeep
 COPY --from=web /web/dist /app/web/dist
 WORKDIR /app
