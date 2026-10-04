@@ -86,6 +86,10 @@ Copy `.env.example` to `.env`. The server loads `.env` from the working director
 
 Keep `SECRET_KEY` (or `DATA_DIR/secret.key`) safe: losing it makes vault entries and secret notes unreadable.
 
+## Database upgrades
+
+There are no migration files. On start the server compares every table with the schema in `src/main.rs` and rebuilds the ones that changed inside a transaction, copying all rows and every column that still exists. With a local database a full copy is written to `DATA_DIR/rustkeep-backup-<timestamp>.db` first. All ids are UUIDs: rows that still carry an old numeric id get a new UUID, and every column declared with `REFERENCES` is updated with it in the same transaction. Just deploy the new version; existing data is kept.
+
 ## Author
 
 Built by [Efe Ozkan](https://efeozkan.com.tr). For questions, ideas or collaboration, get in touch through [efeozkan.com.tr](https://efeozkan.com.tr).

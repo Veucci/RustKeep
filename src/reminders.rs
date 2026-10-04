@@ -8,23 +8,24 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::auth::User;
-use crate::util::{Res, all, bad, esc, exec};
+use crate::util::{Res, all, archive_set, bad, esc, exec, uuid};
 use crate::{App, St};
 
 #[derive(Serialize, Deserialize)]
 pub struct Reminder {
-    id: i64,
+    id: String,
     title: String,
     remind_at: i64,
     note_id: Option<String>,
     sent: i64,
+    archived: i64,
 }
 
 pub async fn list(app: St, user: User) -> Res<Json<Vec<Reminder>>> {
     let rows = all(
         &app.db,
-        "SELECT id, title, remind_at, note_id, sent FROM reminders WHERE user_id = ?1 ORDER BY sent, remind_at",
-        params![user.id],
+        "SELECT id, title, remind_at, note_id, sent, archived FROM reminders WHERE user_id = ?1 ORDER BY sent, remind_at",
+        params![user.id.as_str()],
     )
     .await?;
     Ok(Json(rows))
@@ -43,22 +44,32 @@ pub async fn create(app: St, user: User, Json(r): Json<CreateReq>) -> Res<Json<V
     }
     app.db
         .execute(
-            "INSERT INTO reminders (user_id, title, remind_at, note_id) \
-             SELECT ?1, ?2, ?3, ?4 WHERE ?4 IS NULL OR EXISTS (SELECT 1 FROM notes WHERE id = ?4 AND user_id = ?1)",
-            params![user.id, r.title.trim(), r.remind_at, r.note_id],
+            "INSERT INTO reminders (id, user_id, title, remind_at, note_id) \
+             SELECT ?5, ?1, ?2, ?3, ?4 WHERE ?4 IS NULL OR EXISTS (SELECT 1 FROM notes WHERE id = ?4 AND user_id = ?1)",
+            params![user.id.as_str(), r.title.trim(), r.remind_at, r.note_id, uuid()],
         )
         .await?;
     Ok(Json(json!({ "ok": true })))
 }
 
-pub async fn remove(app: St, user: User, Path(id): Path<i64>) -> Res<Json<Value>> {
-    exec(&app.db, "DELETE FROM reminders WHERE id = ?1 AND user_id = ?2", params![id, user.id]).await?;
+pub async fn action(app: St, user: User, Path((id, action)): Path<(String, String)>) -> Res<Json<Value>> {
+    let set = match action.as_str() {
+        "done" => "sent = 1",
+        "snooze" => "sent = 0, remind_at = MAX(remind_at, unixepoch()) + 86400",
+        other => archive_set(other)?,
+    };
+    exec(&app.db, &format!("UPDATE reminders SET {set} WHERE id = ?1 AND user_id = ?2"), params![id.as_str(), user.id.as_str()]).await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+pub async fn remove(app: St, user: User, Path(id): Path<String>) -> Res<Json<Value>> {
+    exec(&app.db, "DELETE FROM reminders WHERE id = ?1 AND user_id = ?2", params![id.as_str(), user.id.as_str()]).await?;
     Ok(Json(json!({ "ok": true })))
 }
 
 #[derive(Deserialize)]
 struct Due {
-    id: i64,
+    id: String,
     title: String,
     note_id: Option<String>,
     email: String,
@@ -68,7 +79,7 @@ async fn tick(app: &App) -> Res<()> {
     let due: Vec<Due> = all(
         &app.db,
         "SELECT r.id, r.title, r.note_id, u.email FROM reminders r JOIN users u ON u.id = r.user_id \
-         WHERE r.sent = 0 AND r.remind_at <= unixepoch()",
+         WHERE r.sent = 0 AND r.archived = 0 AND r.remind_at <= unixepoch()",
         (),
     )
     .await?;
@@ -80,7 +91,7 @@ async fn tick(app: &App) -> Res<()> {
         } else {
             "UPDATE reminders SET remind_at = unixepoch() + 600 WHERE id = ?1"
         };
-        if let Err(e) = app.db.execute(sql, params![d.id]).await {
+        if let Err(e) = app.db.execute(sql, params![d.id.as_str()]).await {
             eprintln!("reminder {} update failed: {e}", d.id);
         }
     }

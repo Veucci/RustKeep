@@ -7,6 +7,7 @@ use leptos::task::spawn_local;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use crate::id::Id;
 use web_sys::{AbortController, File, FileList, FormData};
 
 #[derive(Clone, Debug)]
@@ -80,7 +81,7 @@ pub fn files_of(list: &FileList) -> Vec<File> {
     (0..list.length()).filter_map(|i| list.get(i)).collect()
 }
 
-pub async fn upload(files: Vec<File>, project: Option<i64>) -> ApiResult<Vec<Uploaded>> {
+pub async fn upload(files: Vec<File>, project: Option<Id>) -> ApiResult<Vec<Uploaded>> {
     let form = FormData::new().expect("FormData");
     for f in &files {
         let _ = form.append_with_blob_and_filename("file", f, &f.name());

@@ -4,6 +4,7 @@ mod auth;
 mod board;
 mod dashboard;
 mod files;
+mod migrate;
 mod notes;
 mod projects;
 mod reminders;
@@ -36,7 +37,7 @@ pub struct App {
     pub db: libsql::Connection,
     pub cfg: Config,
     pub crypto: util::Crypto,
-    pub login_attempts: Mutex<HashMap<i64, (u32, i64)>>,
+    pub login_attempts: Mutex<HashMap<String, (u32, i64)>>,
     _database: libsql::Database,
 }
 
@@ -54,41 +55,47 @@ pub type St = axum::extract::State<Arc<App>>;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS users (
-  id INTEGER PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL, pass TEXT NOT NULL,
+  id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL, pass TEXT NOT NULL,
   approved INTEGER NOT NULL DEFAULT 0, approve_token TEXT, pin TEXT,
   pin_fails INTEGER NOT NULL DEFAULT 0, pin_block INTEGER NOT NULL DEFAULT 0,
   created INTEGER NOT NULL DEFAULT (unixepoch()));
 CREATE TABLE IF NOT EXISTS sessions (
-  token TEXT PRIMARY KEY, user_id INTEGER NOT NULL, expires INTEGER NOT NULL, pin_until INTEGER NOT NULL DEFAULT 0);
+  token TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), expires INTEGER NOT NULL, pin_until INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS projects (
-  id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
-  status TEXT NOT NULL DEFAULT 'active', created INTEGER NOT NULL DEFAULT (unixepoch()));
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'active', created INTEGER NOT NULL DEFAULT (unixepoch()),
+  archived INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS board_columns (
-  id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL, name TEXT NOT NULL, position INTEGER NOT NULL);
+  id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), name TEXT NOT NULL, position INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS tasks (
-  id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL, column_id INTEGER NOT NULL, title TEXT NOT NULL,
-  description TEXT NOT NULL DEFAULT '', due TEXT, created INTEGER NOT NULL DEFAULT (unixepoch()));
+  id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+  column_id TEXT NOT NULL REFERENCES board_columns(id), title TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '', due TEXT, created INTEGER NOT NULL DEFAULT (unixepoch()),
+  position INTEGER NOT NULL DEFAULT 0, priority INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS notes (
-  id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, project_id INTEGER, title TEXT NOT NULL DEFAULT '',
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), project_id TEXT REFERENCES projects(id),
+  title TEXT NOT NULL DEFAULT '',
   body TEXT NOT NULL DEFAULT '', secret INTEGER NOT NULL DEFAULT 0, archived INTEGER NOT NULL DEFAULT 0,
   trashed_at INTEGER, rev INTEGER NOT NULL DEFAULT 0, rev_client TEXT, updated INTEGER NOT NULL DEFAULT (unixepoch()),
-  share_token TEXT UNIQUE, share_expires INTEGER);
+  share_token TEXT UNIQUE, share_expires INTEGER, pinned INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS files (
-  id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, project_id INTEGER, name TEXT NOT NULL, mime TEXT NOT NULL,
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), project_id TEXT REFERENCES projects(id),
+  name TEXT NOT NULL, mime TEXT NOT NULL,
   size INTEGER NOT NULL, key TEXT NOT NULL, created INTEGER NOT NULL DEFAULT (unixepoch()),
-  share_token TEXT UNIQUE, share_expires INTEGER);
+  share_token TEXT UNIQUE, share_expires INTEGER, archived INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS vault (
-  id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, name TEXT NOT NULL, value TEXT NOT NULL,
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), name TEXT NOT NULL, value TEXT NOT NULL,
   note TEXT NOT NULL DEFAULT '', created INTEGER NOT NULL DEFAULT (unixepoch()));
 CREATE TABLE IF NOT EXISTS reminders (
-  id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, note_id TEXT, title TEXT NOT NULL,
-  remind_at INTEGER NOT NULL, sent INTEGER NOT NULL DEFAULT 0);
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), note_id TEXT REFERENCES notes(id), title TEXT NOT NULL,
+  remind_at INTEGER NOT NULL, sent INTEGER NOT NULL DEFAULT 0, archived INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS registrations (
-  token TEXT PRIMARY KEY, user_id INTEGER NOT NULL, ip TEXT NOT NULL, agent TEXT NOT NULL, language TEXT NOT NULL,
+  token TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), ip TEXT NOT NULL, agent TEXT NOT NULL, language TEXT NOT NULL,
   origin TEXT NOT NULL, created INTEGER NOT NULL DEFAULT (unixepoch()));
 CREATE TABLE IF NOT EXISTS blocked_emails (email TEXT PRIMARY KEY, created INTEGER NOT NULL DEFAULT (unixepoch()));
 CREATE INDEX IF NOT EXISTS notes_user ON notes(user_id);
 CREATE INDEX IF NOT EXISTS reminders_due ON reminders(sent, remind_at);
+CREATE INDEX IF NOT EXISTS tasks_project ON tasks(project_id, column_id, position);
 ";
 
 fn env(key: &str) -> Option<String> {
@@ -137,6 +144,7 @@ fn api() -> Router<Arc<App>> {
         .route("/api/public/notes/{token}", get(notes::public_get).put(notes::public_update))
         .route("/api/files", get(files::list).post(files::upload).layer(DefaultBodyLimit::disable()))
         .route("/api/files/{id}", delete(files::remove))
+        .route("/api/files/{id}/action/{action}", post(files::action))
         .route("/api/files/{id}/raw", get(files::raw))
         .route("/api/files/{id}/share", post(files::share).delete(files::unshare))
         .route("/api/public/files/{token}", get(files::public_raw))
@@ -144,14 +152,17 @@ fn api() -> Router<Arc<App>> {
         .route("/api/vault/{id}", get(vault::reveal).delete(vault::remove))
         .route("/api/reminders", get(reminders::list).post(reminders::create))
         .route("/api/reminders/{id}", delete(reminders::remove))
+        .route("/api/reminders/{id}/action/{action}", post(reminders::action))
         .route("/api/projects", get(projects::list).post(projects::create))
         .route("/api/projects/{id}", get(projects::get).put(projects::update).delete(projects::remove))
         .route("/api/projects/{id}/export", get(projects::export))
+        .route("/api/projects/{id}/action/{action}", post(projects::action))
         .route("/api/projects/{id}/columns", get(board::columns).post(board::create_column))
         .route("/api/projects/{id}/tasks", get(board::tasks).post(board::create_task))
         .route("/api/columns/{id}", put(board::rename_column).delete(board::remove_column))
         .route("/api/columns/{id}/move/{dir}", post(board::move_column))
         .route("/api/tasks/{id}", put(board::update_task).delete(board::remove_task))
+        .route("/api/tasks/{id}/move", post(board::move_task))
         .route("/api/dashboard", get(dashboard::get))
 }
 
@@ -174,7 +185,11 @@ async fn main() {
     let database = open_db(&cfg.data_dir).await;
     let db = database.connect().expect("connect database");
     let _ = db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA cache_size=-1024;").await;
-    db.execute_batch(SCHEMA).await.expect("schema");
+    let local = !env("TURSO_DATABASE_URL").is_some_and(|u| u.contains("://"));
+    let backup = local.then(|| cfg.data_dir.join(format!("rustkeep-backup-{}.db", auth::unix_now())));
+    if let Err(e) = migrate::migrate(&db, SCHEMA, backup.as_deref()).await {
+        panic!("schema migration failed: {}", e.1);
+    }
 
     let static_dir = PathBuf::from(env("STATIC_DIR").unwrap_or_else(|| "web/dist".into()));
     let index = std::fs::read_to_string(static_dir.join("index.html"))

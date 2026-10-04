@@ -1,22 +1,26 @@
 #![forbid(unsafe_code)]
 
 mod api;
+mod id;
 #[allow(dead_code)]
 mod components;
 mod md;
 mod pages;
+mod palette;
 mod widgets;
 
 use icons::{
-    Archive, Bell, Folder, KeyRound, LayoutDashboard, Lock, LogOut, Menu, Notebook, PanelLeft, SquareKanban,
-    Trash2,
+    Archive, ArrowLeft, Bell, Folder, KeyRound, LayoutDashboard, Lock, LogOut, Menu, Notebook, PanelLeft, Search,
+    SquareKanban, Trash2,
 };
+use leptos::ev;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
-use leptos_router::components::{Outlet, ParentRoute, Route, Router, Routes};
-use leptos_router::hooks::use_location;
+use leptos_router::components::{A, Outlet, ParentRoute, Route, Router, Routes};
+use leptos_router::hooks::{use_location, use_navigate};
 use leptos_router::path;
 use serde_json::Value;
+use wasm_bindgen::JsCast;
 
 use crate::components::hooks::use_theme_mode::ThemeMode;
 use crate::components::ui::avatar::{Avatar, AvatarFallback};
@@ -44,18 +48,18 @@ fn App() -> impl IntoView {
             let _ = el.class_list().toggle_with_force("dark", dark);
         }
     });
-    provide_context(Ui { me: RwSignal::new(None), toast: RwSignal::new(None) });
+    provide_context(Ui { me: RwSignal::new(None), toast: RwSignal::new(None), crumb: RwSignal::new(None) });
 
     view! {
         <Router base=api::base()>
-            <Routes fallback=|| view! { <p class="p-8">"Page not found"</p> }>
+            <Routes fallback=NotFound>
                 <Route path=path!("/login") view=pages::auth::Login />
                 <Route path=path!("/register") view=pages::auth::Register />
                 <Route path=path!("/s/:token") view=pages::shared::SharedNote />
                 <ParentRoute path=path!("") view=Layout>
                     <Route path=path!("") view=pages::dashboard::Dashboard />
                     <Route path=path!("notes") view=|| view! { <pages::notes::NotesList view=View::Active /> } />
-                    <Route path=path!("archive") view=|| view! { <pages::notes::NotesList view=View::Archived /> } />
+                    <Route path=path!("archive") view=pages::archive::ArchivePage />
                     <Route path=path!("trash") view=|| view! { <pages::notes::NotesList view=View::Trash /> } />
                     <Route path=path!("secret") view=|| view! { <pages::notes::NotesList view=View::Secret /> } />
                     <Route path=path!("notes/:id") view=pages::editor::NoteEditor />
@@ -71,18 +75,60 @@ fn App() -> impl IntoView {
     }
 }
 
-fn section(path: &str) -> &'static str {
+#[component]
+fn NotFound() -> impl IntoView {
+    view! {
+        <div class="flex flex-col gap-3 items-center p-16 text-center">
+            <p class="text-lg font-semibold">"Page not found"</p>
+            <Button href=api::url("/")>"Go to dashboard"</Button>
+        </div>
+    }
+}
+
+fn section(path: &str) -> (&'static str, &'static str) {
     let rest = path.strip_prefix(api::base()).unwrap_or(path).trim_start_matches('/');
     match rest.split('/').next().unwrap_or("") {
-        "notes" | "secret" => "Notes",
-        "projects" => "Projects",
-        "files" => "Files",
-        "reminders" => "Reminders",
-        "vault" => "Vault",
-        "archive" => "Archive",
-        "trash" => "Trash",
-        _ => "Dashboard",
+        "notes" => ("Notes", "/notes"),
+        "secret" => ("Secret notes", "/secret"),
+        "projects" => ("Projects", "/projects"),
+        "files" => ("Files", "/files"),
+        "reminders" => ("Reminders", "/reminders"),
+        "vault" => ("Vault", "/vault"),
+        "archive" => ("Archive", "/archive"),
+        "trash" => ("Trash", "/trash"),
+        _ => ("Dashboard", "/"),
     }
+}
+
+fn parent(path: &str) -> &'static str {
+    let rest = path.strip_prefix(api::base()).unwrap_or(path).trim_end_matches('/');
+    let (_, root) = section(path);
+    if rest == root.trim_end_matches('/') { "/" } else { root }
+}
+
+fn typing() -> bool {
+    document().active_element().is_some_and(|el| {
+        let tag = el.tag_name().to_ascii_lowercase();
+        matches!(tag.as_str(), "input" | "textarea" | "select") || el.has_attribute("contenteditable")
+    })
+}
+
+fn shortcuts(palette: RwSignal<bool>) {
+    let listener = window_event_listener(ev::keydown, move |e| {
+        if (e.ctrl_key() || e.meta_key()) && e.key().eq_ignore_ascii_case("k") {
+            e.prevent_default();
+            palette.update(|o| *o = !*o);
+            return;
+        }
+        if e.key() != "/" || typing() || palette.get_untracked() {
+            return;
+        }
+        if let Ok(Some(el)) = document().query_selector("input[data-search]") {
+            e.prevent_default();
+            let _ = el.unchecked_into::<web_sys::HtmlElement>().focus();
+        }
+    });
+    on_cleanup(move || listener.remove());
 }
 
 #[component]
@@ -112,13 +158,13 @@ fn NavGroup(label: &'static str, children: Children) -> impl IntoView {
 #[component]
 fn Brand() -> impl IntoView {
     view! {
-        <div class="flex gap-2 items-center p-2">
+        <A href=api::url("/") attr:class="flex gap-2 items-center p-2 rounded-lg transition-colors hover:bg-sidenav-accent" attr:title="Go to dashboard">
             <LogoTile class="size-8" />
             <div class="flex flex-col leading-tight">
                 <span class="text-sm font-semibold">"RustKeep"</span>
                 <span class="text-xs text-muted-foreground">"Personal workspace"</span>
             </div>
-        </div>
+        </A>
     }
 }
 
@@ -195,11 +241,56 @@ fn NavBody() -> impl IntoView {
 }
 
 #[component]
+fn Breadcrumb() -> impl IntoView {
+    let ui = use_ui();
+    let location = use_location();
+    let navigate = use_navigate();
+    let current = move || section(&location.pathname.get());
+    let crumb = move || {
+        location.pathname.track();
+        let path = window().location().pathname().unwrap_or_default();
+        ui.crumb.get().filter(|(p, _)| *p == path).map(|(_, text)| text)
+    };
+    let at_home = move || current().1 == "/";
+    let up = move |_| navigate(parent(&location.pathname.get_untracked()), Default::default());
+
+    view! {
+        <Show when=move || !at_home()>
+            <Button variant=ButtonVariant::Ghost size=ButtonSize::IconSm attr:title="Go back" on:click=up.clone()>
+                <ArrowLeft />
+            </Button>
+        </Show>
+        <nav class="flex gap-1.5 items-center min-w-0 text-sm">
+            <A href=api::url("/") attr:class="hidden sm:inline text-muted-foreground hover:text-foreground">"RustKeep"</A>
+            <Show when=move || !at_home()>
+                <span class="hidden sm:inline text-muted-foreground">"/"</span>
+                <A
+                    href=move || api::url(current().1)
+                    attr:class=move || if crumb().is_some() { "text-muted-foreground hover:text-foreground" } else { "font-medium" }
+                >
+                    {move || current().0}
+                </A>
+            </Show>
+            <Show when=at_home>
+                <span class="hidden sm:inline text-muted-foreground">"/"</span>
+                <span class="font-medium">"Dashboard"</span>
+            </Show>
+            {move || crumb().map(|c| view! {
+                <span class="text-muted-foreground">"/"</span>
+                <span class="font-medium truncate max-w-48 sm:max-w-80">{if c.is_empty() { "Untitled".to_owned() } else { c }}</span>
+            })}
+        </nav>
+    }
+}
+
+#[component]
 fn Layout() -> impl IntoView {
     let ui = use_ui();
     spawn_local(ui.refresh_me());
     let location = use_location();
     let mobile = RwSignal::new(false);
+    let palette = RwSignal::new(false);
+    shortcuts(palette);
     Effect::new(move |_| {
         location.pathname.track();
         mobile.set(false);
@@ -227,12 +318,13 @@ fn Layout() -> impl IntoView {
                         <Menu />
                     </Button>
                     <Separator orientation=SeparatorOrientation::Vertical class="mr-1 h-4" />
-                    <nav class="flex gap-1.5 items-center text-sm">
-                        <span class="hidden sm:inline text-muted-foreground">"RustKeep"</span>
-                        <span class="hidden sm:inline text-muted-foreground">"/"</span>
-                        <span class="font-medium">{move || section(&location.pathname.get())}</span>
-                    </nav>
+                    <Breadcrumb />
                     <div class="flex-1" />
+                    <Button variant=ButtonVariant::Outline size=ButtonSize::Sm class="text-muted-foreground" attr:title="Search and jump (Ctrl+K)" on:click=move |_| palette.set(true)>
+                        <Search />
+                        <span class="hidden sm:inline">"Search..."</span>
+                        <kbd class="hidden px-1.5 font-mono rounded border md:inline text-[10px] bg-muted">"Ctrl K"</kbd>
+                    </Button>
                     <ThemeToggle />
                 </header>
                 <main class="flex-1 p-4 md:p-6 lg:p-8">
@@ -240,5 +332,6 @@ fn Layout() -> impl IntoView {
                 </main>
             </div>
         </SidenavWrapper>
+        <palette::Palette open=palette />
     }
 }

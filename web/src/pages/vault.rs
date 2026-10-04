@@ -6,17 +6,31 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::api;
+use crate::id::Id;
 use crate::components::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::components::ui::card::{Card, CardContent, CardHeader, CardTitle};
 use crate::components::ui::input::{Input, InputType};
 use crate::components::ui::label::Label;
-use crate::widgets::{PageHeader, PinGate, Ui, copy, use_ui};
+use crate::widgets::{Options, PageHeader, PinGate, SearchBox, SortSelect, Toolbar, Ui, copy, has, query_state, use_ui};
+
+const SORTS: Options = &[("name", "Name A-Z"), ("newest", "Newest"), ("oldest", "Oldest")];
 
 #[derive(Clone, Deserialize)]
 struct Item {
-    id: i64,
+    id: Id,
     name: String,
     note: String,
+    created: i64,
+}
+
+fn arrange(mut list: Vec<Item>, q: &str, sort: &str) -> Vec<Item> {
+    list.retain(|i| has(&i.name, q) || has(&i.note, q));
+    match sort {
+        "newest" => list.sort_by_key(|i| std::cmp::Reverse(i.created)),
+        "oldest" => list.sort_by_key(|i| i.created),
+        _ => list.sort_by_key(|i| i.name.to_lowercase()),
+    }
+    list
 }
 
 #[component]
@@ -46,6 +60,9 @@ fn VaultInner() -> impl IntoView {
         });
     };
     let reload = Callback::new(move |_| items.refetch());
+    let q = RwSignal::new(String::new());
+    let (sort, set_sort) = query_state("sort", "name");
+    let rows = move || arrange(items.get().unwrap_or_default(), &q.get(), &sort.get());
 
     view! {
         <div class="flex flex-col gap-6 mx-auto max-w-4xl page-enter">
@@ -72,14 +89,18 @@ fn VaultInner() -> impl IntoView {
                     </form>
                 </CardContent>
             </Card>
+            <Toolbar>
+                <SearchBox value=q placeholder="Search secrets  /" />
+                <SortSelect options=SORTS value=sort on_change=set_sort />
+            </Toolbar>
             <Card class="overflow-hidden gap-0 py-0 divide-y">
-                {move || items.get().unwrap_or_default().into_iter().map(|i| view! { <VaultRow item=i reload /> }).collect_view()}
+                {move || rows().into_iter().map(|i| view! { <VaultRow item=i reload /> }).collect_view()}
             </Card>
         </div>
     }
 }
 
-async fn reveal(ui: Ui, id: i64) -> Option<String> {
+async fn reveal(ui: Ui, id: Id) -> Option<String> {
     let v = ui.run(api::get::<Value>(&format!("/api/vault/{id}"))).await?;
     v["value"].as_str().map(str::to_owned)
 }

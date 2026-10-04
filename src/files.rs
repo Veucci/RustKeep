@@ -14,12 +14,12 @@ use tower::ServiceExt;
 use tower_http::services::ServeFile;
 
 use crate::auth::User;
-use crate::util::{Res, all, bad, exec, one, token, uuid};
+use crate::util::{Res, all, archive_set, bad, exec, one, token, uuid};
 use crate::{App, St};
 
 #[derive(Deserialize)]
 pub struct ListQ {
-    project: Option<i64>,
+    project: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -28,18 +28,19 @@ pub struct FileItem {
     name: String,
     mime: String,
     size: i64,
-    project_id: Option<i64>,
+    project_id: Option<String>,
     created: i64,
     share_token: Option<String>,
     share_expires: Option<i64>,
+    archived: i64,
 }
 
 pub async fn list(app: St, user: User, Query(q): Query<ListQ>) -> Res<Json<Vec<FileItem>>> {
     let rows = all(
         &app.db,
-        "SELECT id, name, mime, size, project_id, created, share_token, share_expires FROM files \
+        "SELECT id, name, mime, size, project_id, created, share_token, share_expires, archived FROM files \
          WHERE user_id = ?1 AND (?2 IS NULL OR project_id = ?2) ORDER BY created DESC",
-        params![user.id, q.project],
+        params![user.id.as_str(), q.project],
     )
     .await?;
     Ok(Json(rows))
@@ -79,7 +80,7 @@ pub async fn upload(app: St, user: User, Query(q): Query<ListQ>, mut mp: Multipa
             .execute(
                 "INSERT INTO files (id, user_id, project_id, name, mime, size, key) \
                  VALUES (?1, ?2, (SELECT id FROM projects WHERE id = ?3 AND user_id = ?2), ?4, ?5, ?6, ?7)",
-                params![id.clone(), user.id, q.project, name.clone(), mime, size, key],
+                params![id.as_str(), user.id.as_str(), q.project.as_deref(), name.clone(), mime, size, key],
             )
             .await?;
         saved.push(json!({ "id": id, "name": name }));
@@ -122,7 +123,7 @@ async fn serve(app: &App, f: Stored, req: Request) -> Res<Response> {
 }
 
 pub async fn raw(app: St, user: User, Path(id): Path<String>, req: Request) -> Res<Response> {
-    let f = one(&app.db, "SELECT name, mime, key FROM files WHERE id = ?1 AND user_id = ?2", params![id, user.id]).await?;
+    let f = one(&app.db, "SELECT name, mime, key FROM files WHERE id = ?1 AND user_id = ?2", params![id.as_str(), user.id.as_str()]).await?;
     serve(&app, f, req).await
 }
 
@@ -136,9 +137,15 @@ pub async fn public_raw(app: St, Path(t): Path<String>, req: Request) -> Res<Res
     serve(&app, f, req).await
 }
 
+pub async fn action(app: St, user: User, Path((id, action)): Path<(String, String)>) -> Res<Json<Value>> {
+    let sql = format!("UPDATE files SET {} WHERE id = ?1 AND user_id = ?2", archive_set(&action)?);
+    exec(&app.db, &sql, params![id.as_str(), user.id.as_str()]).await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
 pub async fn remove(app: St, user: User, Path(id): Path<String>) -> Res<Json<Value>> {
-    let f: Stored = one(&app.db, "SELECT name, mime, key FROM files WHERE id = ?1 AND user_id = ?2", params![id.clone(), user.id]).await?;
-    exec(&app.db, "DELETE FROM files WHERE id = ?1", params![id]).await?;
+    let f: Stored = one(&app.db, "SELECT name, mime, key FROM files WHERE id = ?1 AND user_id = ?2", params![id.as_str(), user.id.as_str()]).await?;
+    exec(&app.db, "DELETE FROM files WHERE id = ?1", params![id.as_str()]).await?;
     let _ = tokio::fs::remove_file(path_of(&app, &f.key)).await;
     Ok(Json(json!({ "ok": true })))
 }
@@ -153,7 +160,7 @@ pub async fn share(app: St, user: User, Path(id): Path<String>, Json(r): Json<Sh
     exec(
         &app.db,
         "UPDATE files SET share_token = ?1, share_expires = ?2 WHERE id = ?3 AND user_id = ?4",
-        params![t.clone(), r.expires, id, user.id],
+        params![t.clone(), r.expires, id, user.id.as_str()],
     )
     .await?;
     Ok(Json(json!({ "token": t })))
@@ -163,7 +170,7 @@ pub async fn unshare(app: St, user: User, Path(id): Path<String>) -> Res<Json<Va
     exec(
         &app.db,
         "UPDATE files SET share_token = NULL, share_expires = NULL WHERE id = ?1 AND user_id = ?2",
-        params![id, user.id],
+        params![id.as_str(), user.id.as_str()],
     )
     .await?;
     Ok(Json(json!({ "ok": true })))

@@ -1,8 +1,12 @@
 use std::time::Duration;
 
-use leptos::ev::SubmitEvent;
+use icons::{ArrowUpDown, Search};
+use leptos::ev::{self, SubmitEvent};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
+use leptos_router::NavigateOptions;
+use leptos_router::hooks::{use_location, use_navigate, use_query_map};
+use wasm_bindgen::JsCast;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use wasm_bindgen::JsValue;
@@ -26,6 +30,7 @@ pub struct Me {
 pub struct Ui {
     pub me: RwSignal<Option<Me>>,
     pub toast: RwSignal<Option<String>>,
+    pub crumb: RwSignal<Option<(String, String)>>,
 }
 
 impl Ui {
@@ -56,6 +61,144 @@ impl Ui {
     pub async fn run<T>(self, fut: impl Future<Output = api::ApiResult<T>>) -> Option<T> {
         fut.await.map_err(|e| self.fail(e)).ok()
     }
+
+    pub fn set_crumb(self, text: String) {
+        let path = window().location().pathname().unwrap_or_default();
+        self.crumb.set(Some((path, text)));
+    }
+
+    pub fn act(self, path: String, done: impl Fn() + 'static) {
+        spawn_local(async move {
+            if self.run(api::post::<Value>(&path, &())).await.is_some() {
+                done();
+            }
+        });
+    }
+}
+
+pub fn create_note(ui: Ui, navigate: impl Fn(&str, NavigateOptions) + 'static, body: Value) {
+    spawn_local(async move {
+        if let Some(v) = ui.run(api::post::<Value>("/api/notes", &body)).await {
+            navigate(&format!("/notes/{}", v["id"].as_str().unwrap_or_default()), Default::default());
+        }
+    });
+}
+
+pub const SELECT_CLASS: &str =
+    "px-2 h-9 text-sm rounded-md border shadow-xs transition-colors bg-background border-input hover:bg-accent dark:bg-input/30";
+
+pub type Options = &'static [(&'static str, &'static str)];
+
+pub fn query_state(key: &'static str, default: &'static str) -> (Signal<String>, Callback<String>) {
+    let query = use_query_map();
+    let location = use_location();
+    let navigate = use_navigate();
+    let value = Memo::new(move |_| query.with(|q| q.get(key)).unwrap_or_else(|| default.to_owned()));
+    let update = Callback::new(move |v: String| {
+        let mut q = query.get_untracked();
+        q.remove(key);
+        if v != default {
+            q.insert(key, v);
+        }
+        let path = location.pathname.get_untracked();
+        let path = path.strip_prefix(api::base()).unwrap_or(&path);
+        let opts = NavigateOptions { replace: true, scroll: false, ..Default::default() };
+        navigate(&format!("{path}{}", q.to_query_string()), opts);
+    });
+    (value.into(), update)
+}
+
+pub fn focus_if_new() {
+    if use_query_map().with_untracked(|q| q.get("new").is_none()) {
+        return;
+    }
+    request_animation_frame(|| {
+        if let Some(el) = document().get_element_by_id("new-item") {
+            let _ = el.unchecked_into::<web_sys::HtmlElement>().focus();
+        }
+    });
+}
+
+pub fn has(text: &str, needle: &str) -> bool {
+    text.to_lowercase().contains(&needle.trim().to_lowercase())
+}
+
+pub fn today() -> String {
+    let d = js_sys::Date::new_0();
+    format!("{:04}-{:02}-{:02}", d.get_full_year(), d.get_month() + 1, d.get_date())
+}
+
+pub fn days_until(due: &str) -> i64 {
+    let at = |s: &str| js_sys::Date::new(&JsValue::from_str(&format!("{s}T00:00:00"))).get_time();
+    ((at(due) - at(&today())) / 86_400_000.0).round() as i64
+}
+
+pub fn due_label(days: i64) -> String {
+    match days {
+        0 => "Today".into(),
+        1 => "Tomorrow".into(),
+        -1 => "Yesterday".into(),
+        d if d < 0 => format!("{} days overdue", -d),
+        d => format!("In {d} days"),
+    }
+}
+
+#[component]
+pub fn Segmented(options: Options, value: Signal<String>, on_change: Callback<String>) -> impl IntoView {
+    view! {
+        <div class="inline-flex overflow-x-auto gap-1 items-center p-1 max-w-full rounded-lg w-fit bg-muted">
+            {options
+                .iter()
+                .map(|(key, label)| {
+                    let class = move || {
+                        let active = if value.get() == *key {
+                            "bg-background text-foreground shadow-sm"
+                        } else {
+                            "text-muted-foreground hover:text-foreground"
+                        };
+                        format!("px-3 h-7 text-sm font-medium whitespace-nowrap rounded-md transition-all shrink-0 {active}")
+                    };
+                    view! { <button type="button" class=class on:click=move |_| on_change.run((*key).to_owned())>{*label}</button> }
+                })
+                .collect_view()}
+        </div>
+    }
+}
+
+#[component]
+pub fn SortSelect(options: Options, value: Signal<String>, on_change: Callback<String>) -> impl IntoView {
+    view! {
+        <label class="flex gap-1.5 items-center text-muted-foreground" title="Sort">
+            <ArrowUpDown class="size-4" />
+            <select class=SELECT_CLASS on:change=move |ev| on_change.run(event_target_value(&ev))>
+                {options
+                    .iter()
+                    .map(|(k, l)| view! { <option value=*k selected=move || value.get() == *k>{*l}</option> })
+                    .collect_view()}
+            </select>
+        </label>
+    }
+}
+
+#[component]
+pub fn SearchBox(value: RwSignal<String>, #[prop(into)] placeholder: String) -> impl IntoView {
+    view! {
+        <div class="relative w-full sm:w-56">
+            <Search class="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+                data-search="true"
+                class="pr-2 pl-8 w-full h-9 text-sm rounded-md border shadow-xs outline-none bg-background border-input dark:bg-input/30 focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+                placeholder=placeholder
+                prop:value=move || value.get()
+                on:input=move |ev| value.set(event_target_value(&ev))
+            />
+        </div>
+    }
+}
+
+#[component]
+pub fn Toolbar(children: Children) -> impl IntoView {
+    view! { <div class="flex flex-wrap gap-2 justify-between items-center">{children()}</div> }
 }
 
 pub fn use_ui() -> Ui {
@@ -83,6 +226,12 @@ pub fn Toast() -> impl IntoView {
 #[component]
 pub fn Modal(open: RwSignal<bool>, #[prop(into)] title: String, children: ChildrenFn) -> impl IntoView {
     let title = StoredValue::new(title);
+    let esc = window_event_listener(ev::keydown, move |e| {
+        if e.key() == "Escape" && open.get_untracked() {
+            open.set(false);
+        }
+    });
+    on_cleanup(move || esc.remove());
     view! {
         <Show when=move || open.get()>
             <div
@@ -274,7 +423,7 @@ pub fn ReminderForm(note_id: Option<String>, #[prop(into)] title: String, on_don
         <form class="flex flex-col gap-3 sm:flex-row sm:items-end" on:submit=submit>
             <div class="flex flex-col flex-1 gap-2">
                 <Label>"Title"</Label>
-                <Input bind_value=title required=true />
+                <Input id="new-item" bind_value=title required=true />
             </div>
             <div class="flex flex-col gap-2">
                 <Label>"When"</Label>

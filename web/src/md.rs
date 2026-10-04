@@ -30,7 +30,7 @@ pub fn render(src: &str) -> String {
     });
     let mut out = String::new();
     html::push_html(&mut out, events);
-    out
+    out.replace("<a href=", "<a rel=\"external\" href=")
 }
 
 #[cfg(test)]

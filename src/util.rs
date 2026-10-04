@@ -39,6 +39,14 @@ pub fn bad(msg: &str) -> AppError {
     err(StatusCode::BAD_REQUEST, msg)
 }
 
+pub fn archive_set(action: &str) -> Res<&'static str> {
+    match action {
+        "archive" => Ok("archived = 1"),
+        "unarchive" => Ok("archived = 0"),
+        _ => Err(bad("Invalid action")),
+    }
+}
+
 pub fn token() -> String {
     hex::encode(rand::random::<[u8; 24]>())
 }

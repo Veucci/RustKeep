@@ -6,11 +6,11 @@ use serde_json::{Value, json};
 
 use crate::St;
 use crate::auth::User;
-use crate::util::{Res, all, bad, exec, one};
+use crate::util::{Res, all, bad, exec, one, uuid};
 
 #[derive(Serialize, Deserialize)]
 pub struct Item {
-    id: i64,
+    id: String,
     name: String,
     note: String,
     created: i64,
@@ -21,7 +21,7 @@ pub async fn list(app: St, user: User) -> Res<Json<Vec<Item>>> {
     let rows = all(
         &app.db,
         "SELECT id, name, note, created FROM vault WHERE user_id = ?1 ORDER BY name",
-        params![user.id],
+        params![user.id.as_str()],
     )
     .await?;
     Ok(Json(rows))
@@ -32,9 +32,9 @@ struct Sealed {
     value: String,
 }
 
-pub async fn reveal(app: St, user: User, Path(id): Path<i64>) -> Res<Json<Value>> {
+pub async fn reveal(app: St, user: User, Path(id): Path<String>) -> Res<Json<Value>> {
     user.need_pin()?;
-    let s: Sealed = one(&app.db, "SELECT value FROM vault WHERE id = ?1 AND user_id = ?2", params![id, user.id]).await?;
+    let s: Sealed = one(&app.db, "SELECT value FROM vault WHERE id = ?1 AND user_id = ?2", params![id.as_str(), user.id.as_str()]).await?;
     Ok(Json(json!({ "value": app.crypto.open(&s.value)? })))
 }
 
@@ -53,15 +53,15 @@ pub async fn create(app: St, user: User, Json(r): Json<CreateReq>) -> Res<Json<V
     }
     app.db
         .execute(
-            "INSERT INTO vault (user_id, name, value, note) VALUES (?1, ?2, ?3, ?4)",
-            params![user.id, r.name.trim(), app.crypto.seal(&r.value), r.note],
+            "INSERT INTO vault (id, user_id, name, value, note) VALUES (?5, ?1, ?2, ?3, ?4)",
+            params![user.id.as_str(), r.name.trim(), app.crypto.seal(&r.value), r.note, uuid()],
         )
         .await?;
     Ok(Json(json!({ "ok": true })))
 }
 
-pub async fn remove(app: St, user: User, Path(id): Path<i64>) -> Res<Json<Value>> {
+pub async fn remove(app: St, user: User, Path(id): Path<String>) -> Res<Json<Value>> {
     user.need_pin()?;
-    exec(&app.db, "DELETE FROM vault WHERE id = ?1 AND user_id = ?2", params![id, user.id]).await?;
+    exec(&app.db, "DELETE FROM vault WHERE id = ?1 AND user_id = ?2", params![id.as_str(), user.id.as_str()]).await?;
     Ok(Json(json!({ "ok": true })))
 }

@@ -19,7 +19,7 @@ const LOGIN_MAX: u32 = 10;
 const LOGIN_WINDOW: i64 = 15 * 60;
 
 pub struct User {
-    pub id: i64,
+    pub id: String,
     pub pin_ok: bool,
     token: String,
 }
@@ -32,7 +32,7 @@ impl User {
 
 #[derive(Deserialize)]
 struct SessionRow {
-    user_id: i64,
+    user_id: String,
     pin_until: i64,
 }
 
@@ -75,16 +75,16 @@ pub struct LoginReq {
 
 #[derive(Deserialize)]
 struct LoginRow {
-    id: i64,
+    id: String,
     pass: String,
     approved: i64,
 }
 
-fn login_allowed(app: &App, user_id: i64) -> bool {
+fn login_allowed(app: &App, user_id: &str) -> bool {
     let now = unix_now();
     let mut attempts = app.login_attempts.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     attempts.retain(|_, (_, start)| now - *start < LOGIN_WINDOW);
-    let entry = attempts.entry(user_id).or_insert((0, now));
+    let entry = attempts.entry(user_id.to_owned()).or_insert((0, now));
     entry.0 += 1;
     entry.0 <= LOGIN_MAX
 }
@@ -98,7 +98,7 @@ pub async fn login(app: St, Json(r): Json<LoginReq>) -> Res<impl IntoResponse> {
     )
     .await
     .map_err(|_| invalid())?;
-    if !login_allowed(&app, u.id) {
+    if !login_allowed(&app, &u.id) {
         return Err(err(StatusCode::TOO_MANY_REQUESTS, "Too many sign-in attempts, try again later"));
     }
     if !verify(&r.password, &u.pass) {
@@ -112,7 +112,7 @@ pub async fn login(app: St, Json(r): Json<LoginReq>) -> Res<impl IntoResponse> {
     app.db
         .execute(
             "INSERT INTO sessions (token, user_id, expires) VALUES (?1, ?2, unixepoch() + ?3)",
-            params![t.clone(), u.id, SESSION_SECS],
+            params![t.clone(), u.id.as_str(), SESSION_SECS],
         )
         .await?;
     Ok((session_cookie(&app, &t, SESSION_SECS), Json(json!({ "ok": true }))))
@@ -125,7 +125,7 @@ pub async fn logout(app: St, user: User) -> Res<impl IntoResponse> {
 
 #[derive(Serialize, Deserialize)]
 pub struct Me {
-    id: i64,
+    id: String,
     email: String,
     name: String,
     has_pin: i64,
@@ -137,7 +137,7 @@ pub async fn me(app: St, user: User) -> Res<Json<Me>> {
     let mut me: Me = one(
         &app.db,
         "SELECT id, email, name, pin IS NOT NULL AS has_pin FROM users WHERE id = ?1",
-        params![user.id],
+        params![user.id.as_str()],
     )
     .await?;
     me.pin_ok = user.pin_ok;
@@ -154,11 +154,11 @@ pub async fn set_pin(app: St, user: User, Json(r): Json<SetPinReq>) -> Res<Json<
     if r.pin.len() < 4 || r.pin.len() > 8 || !r.pin.chars().all(|c| c.is_ascii_digit()) {
         return Err(bad("PIN must be 4-8 digits"));
     }
-    let row: LoginRow = one(&app.db, "SELECT id, pass, approved FROM users WHERE id = ?1", params![user.id]).await?;
+    let row: LoginRow = one(&app.db, "SELECT id, pass, approved FROM users WHERE id = ?1", params![user.id.as_str()]).await?;
     if !verify(&r.password, &row.pass) {
         return Err(err(StatusCode::UNAUTHORIZED, "Wrong password"));
     }
-    exec(&app.db, "UPDATE users SET pin = ?1, pin_fails = 0 WHERE id = ?2", params![hash(&r.pin), user.id]).await?;
+    exec(&app.db, "UPDATE users SET pin = ?1, pin_fails = 0 WHERE id = ?2", params![hash(&r.pin), user.id.as_str()]).await?;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -178,7 +178,7 @@ struct PinAttempt {
 }
 
 pub async fn unlock(app: St, user: User, Json(r): Json<UnlockReq>) -> Res<Json<Value>> {
-    let row: PinRow = one(&app.db, "SELECT pin FROM users WHERE id = ?1", params![user.id]).await?;
+    let row: PinRow = one(&app.db, "SELECT pin FROM users WHERE id = ?1", params![user.id.as_str()]).await?;
     if row.pin.is_none() {
         return Err(bad("Set a PIN first"));
     }
@@ -187,7 +187,7 @@ pub async fn unlock(app: St, user: User, Json(r): Json<UnlockReq>) -> Res<Json<V
         "UPDATE users SET pin_fails = (pin_fails + 1) % 5, \
          pin_block = CASE WHEN pin_fails >= 4 THEN unixepoch() + 300 ELSE pin_block END \
          WHERE id = ?1 AND pin IS NOT NULL AND pin_block <= unixepoch() RETURNING pin",
-        params![user.id],
+        params![user.id.as_str()],
     )
     .await?
     .pop();
@@ -197,7 +197,7 @@ pub async fn unlock(app: St, user: User, Json(r): Json<UnlockReq>) -> Res<Json<V
     if !verify(&r.pin, &attempt.pin) {
         return Err(err(StatusCode::UNAUTHORIZED, "Wrong PIN"));
     }
-    app.db.execute("UPDATE users SET pin_fails = 0, pin_block = 0 WHERE id = ?1", params![user.id]).await?;
+    app.db.execute("UPDATE users SET pin_fails = 0, pin_block = 0 WHERE id = ?1", params![user.id.as_str()]).await?;
     app.db
         .execute("UPDATE sessions SET pin_until = unixepoch() + ?1 WHERE token = ?2", params![PIN_SECS, user.token])
         .await?;

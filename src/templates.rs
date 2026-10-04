@@ -4,7 +4,7 @@ use crate::util::esc;
 
 #[derive(Deserialize)]
 pub struct Applicant {
-    pub user_id: i64,
+    pub user_id: String,
     pub name: String,
     pub email: String,
     pub ip: String,

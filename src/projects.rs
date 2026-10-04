@@ -9,9 +9,9 @@ use serde_json::{Value, json};
 
 use crate::St;
 use crate::auth::User;
-use crate::util::{Res, all, bad, exec, one};
+use crate::util::{Res, all, archive_set, bad, exec, one, uuid};
 
-pub const PROJECT_SELECT: &str = "SELECT p.id, p.name, p.description, p.status, p.created, \
+pub const PROJECT_SELECT: &str = "SELECT p.id, p.name, p.description, p.status, p.created, p.archived, \
      (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id) AS tasks, \
      (SELECT COUNT(*) FROM tasks t WHERE t.column_id = \
         (SELECT c.id FROM board_columns c WHERE c.project_id = p.id ORDER BY c.position DESC LIMIT 1)) AS done \
@@ -21,27 +21,28 @@ const DEFAULT_COLUMNS: [&str; 3] = ["To do", "In progress", "Done"];
 
 #[derive(Serialize, Deserialize)]
 pub struct Project {
-    id: i64,
+    id: String,
     name: String,
     description: String,
     status: String,
     created: i64,
+    archived: i64,
     tasks: i64,
     done: i64,
 }
 
 pub async fn list(app: St, user: User) -> Res<Json<Vec<Project>>> {
     let sql = format!("{PROJECT_SELECT} WHERE p.user_id = ?1 ORDER BY p.created DESC");
-    Ok(Json(all(&app.db, &sql, params![user.id]).await?))
+    Ok(Json(all(&app.db, &sql, params![user.id.as_str()]).await?))
 }
 
-pub async fn find(app: &St, user: &User, id: i64) -> Res<Project> {
+pub async fn find(app: &St, user: &User, id: &str) -> Res<Project> {
     let sql = format!("{PROJECT_SELECT} WHERE p.id = ?1 AND p.user_id = ?2");
-    one(&app.db, &sql, params![id, user.id]).await
+    one(&app.db, &sql, params![id, user.id.as_str()]).await
 }
 
-pub async fn get(app: St, user: User, Path(id): Path<i64>) -> Res<Json<Project>> {
-    Ok(Json(find(&app, &user, id).await?))
+pub async fn get(app: St, user: User, Path(id): Path<String>) -> Res<Json<Project>> {
+    Ok(Json(find(&app, &user, &id).await?))
 }
 
 #[derive(Deserialize)]
@@ -57,44 +58,49 @@ pub async fn create(app: St, user: User, Json(r): Json<ProjectReq>) -> Res<Json<
     if r.name.trim().is_empty() {
         return Err(bad("Project name is required"));
     }
-    let mut rows = app
-        .db
-        .query(
-            "INSERT INTO projects (user_id, name, description) VALUES (?1, ?2, ?3) RETURNING id",
-            params![user.id, r.name.trim(), r.description],
+    let id = uuid();
+    app.db
+        .execute(
+            "INSERT INTO projects (id, user_id, name, description) VALUES (?1, ?2, ?3, ?4)",
+            params![id.as_str(), user.id.as_str(), r.name.trim(), r.description],
         )
         .await?;
-    let id: i64 = rows.next().await?.map(|r| r.get(0)).transpose()?.unwrap_or_default();
     for (pos, name) in DEFAULT_COLUMNS.iter().enumerate() {
         app.db
             .execute(
-                "INSERT INTO board_columns (project_id, name, position) VALUES (?1, ?2, ?3)",
-                params![id, *name, pos as i64],
+                "INSERT INTO board_columns (id, project_id, name, position) VALUES (?1, ?2, ?3, ?4)",
+                params![uuid(), id.as_str(), *name, pos as i64],
             )
             .await?;
     }
     Ok(Json(json!({ "id": id })))
 }
 
-pub async fn update(app: St, user: User, Path(id): Path<i64>, Json(r): Json<ProjectReq>) -> Res<Json<Value>> {
+pub async fn update(app: St, user: User, Path(id): Path<String>, Json(r): Json<ProjectReq>) -> Res<Json<Value>> {
     exec(
         &app.db,
         "UPDATE projects SET name = ?1, description = ?2, status = COALESCE(?3, status) WHERE id = ?4 AND user_id = ?5",
-        params![r.name, r.description, r.status, id, user.id],
+        params![r.name, r.description, r.status, id, user.id.as_str()],
     )
     .await?;
     Ok(Json(json!({ "ok": true })))
 }
 
-pub async fn remove(app: St, user: User, Path(id): Path<i64>) -> Res<Json<Value>> {
-    exec(&app.db, "DELETE FROM projects WHERE id = ?1 AND user_id = ?2", params![id, user.id]).await?;
+pub async fn action(app: St, user: User, Path((id, action)): Path<(String, String)>) -> Res<Json<Value>> {
+    let sql = format!("UPDATE projects SET {} WHERE id = ?1 AND user_id = ?2", archive_set(&action)?);
+    exec(&app.db, &sql, params![id.as_str(), user.id.as_str()]).await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+pub async fn remove(app: St, user: User, Path(id): Path<String>) -> Res<Json<Value>> {
+    exec(&app.db, "DELETE FROM projects WHERE id = ?1 AND user_id = ?2", params![id.as_str(), user.id.as_str()]).await?;
     for sql in [
         "DELETE FROM tasks WHERE project_id = ?1",
         "DELETE FROM board_columns WHERE project_id = ?1",
         "UPDATE notes SET project_id = NULL WHERE project_id = ?1",
         "UPDATE files SET project_id = NULL WHERE project_id = ?1",
     ] {
-        app.db.execute(sql, params![id]).await?;
+        app.db.execute(sql, params![id.as_str()]).await?;
     }
     Ok(Json(json!({ "ok": true })))
 }
@@ -129,23 +135,23 @@ fn sheet<'a>(wb: &'a mut Workbook, name: &str, headers: &[&str]) -> Res<&'a mut 
     Ok(ws)
 }
 
-pub async fn export(app: St, user: User, Path(id): Path<i64>) -> Res<impl IntoResponse> {
-    let p = find(&app, &user, id).await?;
+pub async fn export(app: St, user: User, Path(id): Path<String>) -> Res<impl IntoResponse> {
+    let p = find(&app, &user, &id).await?;
     let tasks: Vec<TaskRow> = all(
         &app.db,
         "SELECT t.title, t.description, c.name AS column, t.due FROM tasks t \
-         JOIN board_columns c ON c.id = t.column_id WHERE t.project_id = ?1 ORDER BY c.position, t.id",
-        params![id],
+         JOIN board_columns c ON c.id = t.column_id WHERE t.project_id = ?1 ORDER BY c.position, t.position, t.created",
+        params![id.as_str()],
     )
     .await?;
     let notes: Vec<NoteRow> = all(
         &app.db,
         "SELECT title, updated FROM notes WHERE project_id = ?1 AND user_id = ?2 AND secret = 0 AND trashed_at IS NULL",
-        params![id, user.id],
+        params![id.as_str(), user.id.as_str()],
     )
     .await?;
     let files: Vec<FileRow> =
-        all(&app.db, "SELECT name, mime, size FROM files WHERE project_id = ?1 AND user_id = ?2", params![id, user.id]).await?;
+        all(&app.db, "SELECT name, mime, size FROM files WHERE project_id = ?1 AND user_id = ?2", params![id.as_str(), user.id.as_str()]).await?;
 
     let mut wb = Workbook::new();
     let ws = sheet(&mut wb, "Project", &["Name", "Description", "Status", "Tasks", "Completed"])?;

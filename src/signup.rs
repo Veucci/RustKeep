@@ -8,7 +8,7 @@ use libsql::params;
 use serde_json::{Value, json};
 
 use crate::templates::{Applicant, approval_email, message_page, notice_email, review_page};
-use crate::util::{Res, bad, err, hash, one, token};
+use crate::util::{Res, bad, err, hash, one, token, uuid};
 use crate::{App, St};
 
 #[derive(serde::Deserialize)]
@@ -79,14 +79,13 @@ pub async fn register(
     }
     let t = token();
     let meta = client_meta(&headers, addr);
-    let mut rows = app
-        .db
-        .query(
-            "INSERT INTO users (email, name, pass, approve_token) VALUES (?1, ?2, ?3, ?4) RETURNING id",
-            params![email, r.name.trim(), hash(&r.password), t.clone()],
+    let user_id = uuid();
+    app.db
+        .execute(
+            "INSERT INTO users (id, email, name, pass, approve_token) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![user_id.as_str(), email, r.name.trim(), hash(&r.password), t.clone()],
         )
         .await?;
-    let user_id: i64 = rows.next().await?.map(|r| r.get(0)).transpose()?.unwrap_or_default();
     app.db
         .execute(
             "INSERT INTO registrations (token, user_id, ip, agent, language, origin) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",

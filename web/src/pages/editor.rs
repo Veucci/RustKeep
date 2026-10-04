@@ -1,12 +1,17 @@
-use icons::{Archive, ArchiveRestore, Bell, Bold, Code, Heading, Italic, Link, List, ListChecks, Paperclip, Quote, Share2, Trash2};
+use icons::{
+    Archive, ArchiveRestore, ArrowLeft, Bell, Bold, Code, ExternalLink, Heading, Italic, Link, List, ListChecks, Paperclip, Pin,
+    PinOff, Quote, Share2, Trash2,
+};
 use leptos::html;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
+use leptos_router::components::A;
 use leptos_router::hooks::{use_navigate, use_params_map};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use web_sys::HtmlTextAreaElement;
 
+use crate::id::Id;
 use crate::api::{self, AutoSave, SaveState, client_id, next_rev};
 use crate::components::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::components::ui::input::Input;
@@ -20,10 +25,21 @@ pub struct Note {
     id: String,
     title: String,
     body: String,
-    project_id: Option<i64>,
+    project_id: Option<Id>,
     secret: i64,
     archived: i64,
     share_token: Option<String>,
+    #[serde(default)]
+    pinned: i64,
+}
+
+fn back_target(secret: bool, archived: bool, project: Option<Id>) -> (String, &'static str) {
+    match (secret, archived, project) {
+        (true, _, _) => ("/secret".into(), "Secret notes"),
+        (_, true, _) => ("/archive?tab=notes".into(), "Archive"),
+        (_, _, Some(p)) => (format!("/projects/{p}?tab=notes"), "Project notes"),
+        _ => ("/notes".into(), "All notes"),
+    }
 }
 
 #[component]
@@ -82,6 +98,9 @@ fn EditorBody(note: Note) -> impl IntoView {
     let project = RwSignal::new(note.project_id);
     let archived = RwSignal::new(note.archived == 1);
     let share_token = RwSignal::new(note.share_token);
+    let pinned = RwSignal::new(note.pinned == 1);
+    let back = move || back_target(secret, archived.get(), project.get());
+    Effect::new(move |_| ui.set_crumb(title.get()));
     let share_open = RwSignal::new(false);
     let remind_open = RwSignal::new(false);
     let saver = AutoSave::new();
@@ -104,6 +123,10 @@ fn EditorBody(note: Note) -> impl IntoView {
             }
         });
     };
+    let toggle_pin = move |_| {
+        let action = if pinned.get_untracked() { "unpin" } else { "pin" };
+        ui.act(format!("/api/notes/{}/action/{action}", id.get_value()), move || pinned.update(|p| *p = !*p));
+    };
     let trash = move |_| {
         if secret && !window().confirm_with_message("Secret notes are deleted permanently. Continue?").unwrap_or(false) {
             return;
@@ -118,13 +141,20 @@ fn EditorBody(note: Note) -> impl IntoView {
         });
     };
     let pick_project = move |ev| {
-        project.set(event_target_value(&ev).parse::<i64>().ok());
+        project.set(event_target_value(&ev).parse::<Id>().ok());
         save.run(());
     };
 
     view! {
         <div class="flex flex-col gap-4 mx-auto max-w-6xl page-enter">
             <div class="flex flex-wrap gap-2 items-center">
+                <A
+                    href=move || api::url(&back().0)
+                    attr:class="inline-flex gap-1.5 items-center px-2.5 h-8 text-sm font-medium rounded-md transition-colors hover:bg-accent [&_svg]:size-4"
+                >
+                    <ArrowLeft />
+                    {move || back().1}
+                </A>
                 <SaveBadge state=saver.state />
                 <div class="flex-1" />
                 <Show when=move || !secret>
@@ -145,6 +175,14 @@ fn EditorBody(note: Note) -> impl IntoView {
                                 .collect_view()
                         }}
                     </select>
+                    {move || project.get().map(|p| view! {
+                        <Button variant=ButtonVariant::Ghost size=ButtonSize::IconSm attr:title="Open project" href=api::url(&format!("/projects/{p}"))>
+                            <ExternalLink />
+                        </Button>
+                    })}
+                    <Button variant=ButtonVariant::Outline size=ButtonSize::Sm attr:title=move || if pinned.get() { "Unpin" } else { "Pin to top" } on:click=toggle_pin>
+                        {move || if pinned.get() { view! { <PinOff /> }.into_any() } else { view! { <Pin /> }.into_any() }}
+                    </Button>
                     <Button variant=ButtonVariant::Outline size=ButtonSize::Sm on:click=move |_| share_open.set(true)>
                         <Share2 />
                         "Share"
@@ -204,7 +242,7 @@ pub fn MdEditor(
     title: RwSignal<String>,
     body: RwSignal<String>,
     on_change: Callback<()>,
-    #[prop(optional)] upload_project: Option<RwSignal<Option<i64>>>,
+    #[prop(optional)] upload_project: Option<RwSignal<Option<Id>>>,
     #[prop(optional)] allow_upload: bool,
 ) -> impl IntoView {
     let ui = use_ui();
