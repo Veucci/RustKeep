@@ -5,6 +5,18 @@ Self-hosted notes, files, API key vault, reminders and lightweight project board
 - `./` - server: axum + libSQL (local SQLite file or Turso), single-threaded tokio runtime.
 - `web/` - client: Leptos CSR (nightly) with [rust-ui](https://github.com/rust-ui/ui) components and Tailwind v4.
 
+## Memory usage
+
+The server is built to stay small:
+
+| Setup | Resident memory |
+| --- | --- |
+| Docker image (Alpine, musl), idle | ~1.5 MB |
+| Native release build, idle | ~6.6 MB |
+| Native release build, after 100 API requests | ~7.3 MB |
+
+Signing in or unlocking the PIN briefly adds about 7 MB for password hashing (Argon2id), then drops back.
+
 ## Run with Docker
 
 ```bash
@@ -38,3 +50,11 @@ Copy `.env.example` to `.env`. The server loads `.env` from the working director
 | `VERIFY_EMAIL` | `example@efeozkan.com.tr` | Receives new-user approval requests |
 
 Keep `SECRET_KEY` (or `DATA_DIR/secret.key`) safe: losing it makes vault entries and secret notes unreadable.
+
+## Author
+
+Built by [Efe Ozkan](https://efeozkan.com.tr). For questions, ideas or collaboration, get in touch through [efeozkan.com.tr](https://efeozkan.com.tr).
+
+## License
+
+[MIT](LICENSE) - free to use, modify and distribute, including commercially.

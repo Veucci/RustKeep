@@ -156,7 +156,7 @@ async fn main() {
         public_url: public_url.trim_end_matches('/').to_owned(),
         resend_key: env("RESEND_API_KEY"),
         mail_from: env("MAIL_FROM").unwrap_or_else(|| "RustKeep <noreply@efeozkan.com.tr>".into()),
-        verify_email: env("VERIFY_EMAIL").unwrap_or_else(|| "verification@efeozkan.com.tr".into()),
+        verify_email: env("VERIFY_EMAIL").unwrap_or_else(|| "example@efeozkan.com.tr".into()),
         data_dir,
     };
 
