@@ -7,6 +7,39 @@ Self-hosted notes, files, API key vault, reminders and lightweight project board
 - `./` - server: axum + libSQL (local SQLite file or Turso), single-threaded tokio runtime.
 - `web/` - client: Leptos CSR (nightly) with [rust-ui](https://github.com/rust-ui/ui) components and Tailwind v4.
 
+## Screenshots
+
+**Dashboard** - summary of notes, projects, files and reminders
+
+![Dashboard](assets/screenshots/dashboard.png)
+
+**Dashboard in dark mode**
+
+![Dashboard in dark mode](assets/screenshots/dashboard-dark.png)
+
+**Markdown editor** - split view with live preview, saved as you type
+
+![Markdown editor](assets/screenshots/editor.png)
+
+**Project board** - custom columns, due dates and descriptions on every card
+
+![Project board](assets/screenshots/kanban.png)
+
+<table>
+  <tr>
+    <td><b>Notes</b><br><img src="assets/screenshots/notes.png" alt="Notes"></td>
+    <td><b>Projects</b><br><img src="assets/screenshots/projects.png" alt="Projects"></td>
+  </tr>
+  <tr>
+    <td><b>Files</b><br><img src="assets/screenshots/files.png" alt="Files"></td>
+    <td><b>Vault (PIN protected)</b><br><img src="assets/screenshots/vault.png" alt="Vault"></td>
+  </tr>
+  <tr>
+    <td><b>Reminders</b><br><img src="assets/screenshots/reminders.png" alt="Reminders"></td>
+    <td><b>Sign in</b><br><img src="assets/screenshots/login.png" alt="Sign in"></td>
+  </tr>
+</table>
+
 ## Memory usage
 
 The server is built to stay small:

@@ -104,8 +104,22 @@ pub fn parse_local(v: &str) -> Option<i64> {
     (!v.is_empty() && !t.is_nan()).then(|| (t / 1000.0) as i64)
 }
 
+fn fmt_with(ts: i64, time: bool) -> String {
+    let opts = js_sys::Object::new();
+    let _ = js_sys::Reflect::set(&opts, &"dateStyle".into(), &"medium".into());
+    if time {
+        let _ = js_sys::Reflect::set(&opts, &"timeStyle".into(), &"short".into());
+    }
+    let locale = window().navigator().language().unwrap_or_else(|| "en-US".into());
+    js_sys::Date::new(&JsValue::from_f64(ts as f64 * 1000.0)).to_locale_string(&locale, &opts).into()
+}
+
 pub fn fmt_time(ts: i64) -> String {
-    js_sys::Date::new(&JsValue::from_f64(ts as f64 * 1000.0)).to_locale_string("tr-TR", &JsValue::UNDEFINED).into()
+    fmt_with(ts, true)
+}
+
+pub fn fmt_date(ts: i64) -> String {
+    fmt_with(ts, false)
 }
 
 pub fn fmt_size(b: i64) -> String {

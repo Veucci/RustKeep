@@ -72,7 +72,7 @@ pub async fn del(path: &str) -> ApiResult<Value> {
 
 #[derive(Clone, Deserialize)]
 pub struct Uploaded {
-    pub id: i64,
+    pub id: String,
     pub name: String,
 }
 

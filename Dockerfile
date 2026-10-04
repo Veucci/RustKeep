@@ -2,8 +2,9 @@ FROM rust:1-alpine AS server
 RUN apk add --no-cache build-base
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
+RUN mkdir src && echo "fn main() {}" > src/main.rs && cargo build --release && rm -rf src
 COPY src src
-RUN cargo build --release
+RUN touch src/main.rs && cargo build --release
 
 FROM node:22-bookworm-slim AS web
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates build-essential gzip \
@@ -14,8 +15,11 @@ RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-too
 WORKDIR /web
 COPY web/package.json web/pnpm-lock.yaml ./
 RUN npm install --no-audit --no-fund
+COPY web/Cargo.toml web/Cargo.lock web/rust-toolchain.toml ./
+RUN mkdir src && echo "fn main() {}" > src/main.rs \
+    && cargo build --release --target wasm32-unknown-unknown && rm -rf src
 COPY web ./
-RUN trunk build --release && gzip -k9 dist/*.wasm dist/*.js dist/*.css
+RUN touch src/main.rs && trunk build --release && gzip -k9 dist/*.wasm dist/*.js dist/*.css
 
 FROM alpine:3.22
 RUN apk add --no-cache ca-certificates

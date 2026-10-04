@@ -14,7 +14,7 @@ use tower::ServiceExt;
 use tower_http::services::ServeFile;
 
 use crate::auth::User;
-use crate::util::{Res, all, bad, exec, one, token};
+use crate::util::{Res, all, bad, exec, one, token, uuid};
 use crate::{App, St};
 
 #[derive(Deserialize)]
@@ -24,7 +24,7 @@ pub struct ListQ {
 
 #[derive(Serialize, Deserialize)]
 pub struct FileItem {
-    id: i64,
+    id: String,
     name: String,
     mime: String,
     size: i64,
@@ -74,14 +74,13 @@ pub async fn upload(app: St, user: User, Query(q): Query<ListQ>, mut mp: Multipa
                 return Err(e);
             }
         };
-        let mut rows = app
-            .db
-            .query(
-                "INSERT INTO files (user_id, project_id, name, mime, size, key) VALUES (?1, ?2, ?3, ?4, ?5, ?6) RETURNING id",
-                params![user.id, q.project, name.clone(), mime, size, key],
+        let id = uuid();
+        app.db
+            .execute(
+                "INSERT INTO files (id, user_id, project_id, name, mime, size, key) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![id.clone(), user.id, q.project, name.clone(), mime, size, key],
             )
             .await?;
-        let id: i64 = rows.next().await?.map(|r| r.get(0)).transpose()?.unwrap_or_default();
         saved.push(json!({ "id": id, "name": name }));
     }
     if saved.is_empty() {
@@ -121,7 +120,7 @@ async fn serve(app: &App, f: Stored, req: Request) -> Res<Response> {
     Ok(res.map(Body::new))
 }
 
-pub async fn raw(app: St, user: User, Path(id): Path<i64>, req: Request) -> Res<Response> {
+pub async fn raw(app: St, user: User, Path(id): Path<String>, req: Request) -> Res<Response> {
     let f = one(&app.db, "SELECT name, mime, key FROM files WHERE id = ?1 AND user_id = ?2", params![id, user.id]).await?;
     serve(&app, f, req).await
 }
@@ -136,8 +135,8 @@ pub async fn public_raw(app: St, Path(t): Path<String>, req: Request) -> Res<Res
     serve(&app, f, req).await
 }
 
-pub async fn remove(app: St, user: User, Path(id): Path<i64>) -> Res<Json<Value>> {
-    let f: Stored = one(&app.db, "SELECT name, mime, key FROM files WHERE id = ?1 AND user_id = ?2", params![id, user.id]).await?;
+pub async fn remove(app: St, user: User, Path(id): Path<String>) -> Res<Json<Value>> {
+    let f: Stored = one(&app.db, "SELECT name, mime, key FROM files WHERE id = ?1 AND user_id = ?2", params![id.clone(), user.id]).await?;
     exec(&app.db, "DELETE FROM files WHERE id = ?1", params![id]).await?;
     let _ = tokio::fs::remove_file(path_of(&app, &f.key)).await;
     Ok(Json(json!({ "ok": true })))
@@ -148,7 +147,7 @@ pub struct ShareReq {
     expires: Option<i64>,
 }
 
-pub async fn share(app: St, user: User, Path(id): Path<i64>, Json(r): Json<ShareReq>) -> Res<Json<Value>> {
+pub async fn share(app: St, user: User, Path(id): Path<String>, Json(r): Json<ShareReq>) -> Res<Json<Value>> {
     let t = token();
     exec(
         &app.db,
@@ -159,7 +158,7 @@ pub async fn share(app: St, user: User, Path(id): Path<i64>, Json(r): Json<Share
     Ok(Json(json!({ "token": t })))
 }
 
-pub async fn unshare(app: St, user: User, Path(id): Path<i64>) -> Res<Json<Value>> {
+pub async fn unshare(app: St, user: User, Path(id): Path<String>) -> Res<Json<Value>> {
     exec(
         &app.db,
         "UPDATE files SET share_token = NULL, share_expires = NULL WHERE id = ?1 AND user_id = ?2",

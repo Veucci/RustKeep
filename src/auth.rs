@@ -1,15 +1,15 @@
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::{FromRequestParts, Path};
+use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, StatusCode, header};
-use axum::response::{Html, IntoResponse};
+use axum::response::IntoResponse;
 use libsql::params;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::util::{AppError, Res, bad, cookie, err, esc, exec, hash, one, token, verify};
+use crate::util::{AppError, Res, bad, cookie, err, exec, hash, one, token, verify};
 use crate::{App, St};
 
 const COOKIE: &str = "rk_session";
@@ -63,63 +63,6 @@ fn session_cookie(app: &App, value: &str, max_age: i64) -> HeaderMap {
     let c = format!("{COOKIE}={value}; Path={path}; HttpOnly; SameSite=Lax; Max-Age={max_age}{secure}");
     h.insert(header::SET_COOKIE, c.parse().expect("cookie header"));
     h
-}
-
-#[derive(Deserialize)]
-pub struct RegisterReq {
-    email: String,
-    name: String,
-    password: String,
-}
-
-pub async fn register(app: St, Json(r): Json<RegisterReq>) -> Res<Json<Value>> {
-    let email = r.email.trim().to_lowercase();
-    if !email.contains('@') || r.name.trim().is_empty() || r.password.len() < 8 {
-        return Err(bad("Provide a valid email, a name and a password of at least 8 characters"));
-    }
-    let mut taken = app.db.query("SELECT 1 FROM users WHERE email = ?1", params![email.clone()]).await?;
-    if taken.next().await?.is_some() {
-        return Err(err(StatusCode::CONFLICT, "This email is already registered"));
-    }
-    let approve = token();
-    app.db
-        .execute(
-            "INSERT INTO users (email, name, pass, approve_token) VALUES (?1, ?2, ?3, ?4)",
-            params![email.clone(), r.name.trim(), hash(&r.password), approve.clone()],
-        )
-        .await?;
-    let link = app.url(&format!("/api/auth/approve/{approve}"));
-    let html = format!(
-        "<p>A new RustKeep user is waiting for approval:</p><p><b>{}</b> &lt;{}&gt;</p><p><a href=\"{link}\">Open the approval page</a></p>",
-        esc(r.name.trim()),
-        esc(&email)
-    );
-    app.mail(&app.cfg.verify_email, "RustKeep: new user approval", html).await;
-    Ok(Json(json!({ "message": "Registration received. You can sign in once your account is approved." })))
-}
-
-pub async fn approve_page(Path(t): Path<String>) -> Html<String> {
-    Html(format!(
-        "<!doctype html><meta charset=utf-8><title>RustKeep approval</title><body style=\"font-family:sans-serif;padding:3rem\"><form method=post action=\"{}\"><button style=\"padding:.6rem 1.2rem\">Approve user</button></form>",
-        esc(&t)
-    ))
-}
-
-#[derive(Deserialize)]
-struct Approved {
-    email: String,
-}
-
-pub async fn approve(app: St, Path(t): Path<String>) -> Res<Html<&'static str>> {
-    let u: Approved = one(
-        &app.db,
-        "UPDATE users SET approved = 1, approve_token = NULL WHERE approve_token = ?1 RETURNING email",
-        params![t],
-    )
-    .await?;
-    let html = format!("<p>Your RustKeep account has been approved.</p><p><a href=\"{}\">Sign in</a></p>", app.url("/login"));
-    app.mail(&u.email, "Your RustKeep account has been approved", html).await;
-    Ok(Html("<!doctype html><meta charset=utf-8><body style=\"font-family:sans-serif;padding:3rem\">User approved."))
 }
 
 #[derive(Deserialize)]

@@ -7,6 +7,8 @@ mod files;
 mod notes;
 mod projects;
 mod reminders;
+mod signup;
+mod templates;
 mod util;
 mod vault;
 
@@ -70,7 +72,7 @@ CREATE TABLE IF NOT EXISTS notes (
   trashed_at INTEGER, rev INTEGER NOT NULL DEFAULT 0, rev_client TEXT, updated INTEGER NOT NULL DEFAULT (unixepoch()),
   share_token TEXT UNIQUE, share_expires INTEGER);
 CREATE TABLE IF NOT EXISTS files (
-  id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, project_id INTEGER, name TEXT NOT NULL, mime TEXT NOT NULL,
+  id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, project_id INTEGER, name TEXT NOT NULL, mime TEXT NOT NULL,
   size INTEGER NOT NULL, key TEXT NOT NULL, created INTEGER NOT NULL DEFAULT (unixepoch()),
   share_token TEXT UNIQUE, share_expires INTEGER);
 CREATE TABLE IF NOT EXISTS vault (
@@ -79,6 +81,10 @@ CREATE TABLE IF NOT EXISTS vault (
 CREATE TABLE IF NOT EXISTS reminders (
   id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, note_id TEXT, title TEXT NOT NULL,
   remind_at INTEGER NOT NULL, sent INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS registrations (
+  token TEXT PRIMARY KEY, user_id INTEGER NOT NULL, ip TEXT NOT NULL, agent TEXT NOT NULL, language TEXT NOT NULL,
+  origin TEXT NOT NULL, created INTEGER NOT NULL DEFAULT (unixepoch()));
+CREATE TABLE IF NOT EXISTS blocked_emails (email TEXT PRIMARY KEY, created INTEGER NOT NULL DEFAULT (unixepoch()));
 CREATE INDEX IF NOT EXISTS notes_user ON notes(user_id);
 CREATE INDEX IF NOT EXISTS reminders_due ON reminders(sent, remind_at);
 ";
@@ -111,10 +117,11 @@ async fn open_db(data_dir: &std::path::Path) -> libsql::Database {
 
 fn api() -> Router<Arc<App>> {
     Router::new()
-        .route("/api/auth/register", post(auth::register))
+        .route("/api/auth/register", post(signup::register))
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/logout", post(auth::logout))
-        .route("/api/auth/approve/{token}", get(auth::approve_page).post(auth::approve))
+        .route("/api/auth/approve/{token}", get(signup::review).post(signup::approve))
+        .route("/api/auth/reject/{token}", post(signup::reject))
         .route("/api/me", get(auth::me))
         .route("/api/pin", post(auth::set_pin))
         .route("/api/pin/unlock", post(auth::unlock))
@@ -193,5 +200,5 @@ async fn main() {
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}")).await.expect("bind");
     println!("RustKeep listening on :{port}{base}");
-    axum::serve(listener, routes).await.expect("serve");
+    axum::serve(listener, routes.into_make_service_with_connect_info::<std::net::SocketAddr>()).await.expect("serve");
 }

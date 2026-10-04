@@ -15,7 +15,7 @@ use crate::widgets::{ListSkeleton, PageHeader, ShareDialog, copy, fmt_size, fmt_
 
 #[derive(Clone, Deserialize)]
 pub struct FileItem {
-    pub id: i64,
+    pub id: String,
     pub name: String,
     pub size: i64,
     pub created: i64,
@@ -132,16 +132,16 @@ pub fn FileManager(#[prop(optional)] project: Option<i64>) -> impl IntoView {
 #[component]
 fn FileRow(file: FileItem, reload: Callback<()>) -> impl IntoView {
     let ui = use_ui();
-    let id = file.id;
+    let id = StoredValue::new(file.id.clone());
     let token = RwSignal::new(file.share_token);
     let open = RwSignal::new(false);
-    let private_url = api::url(&format!("/api/files/{id}/raw"));
+    let private_url = api::url(&format!("/api/files/{}/raw", file.id));
     let remove = move |_| {
         if !window().confirm_with_message("Delete this file?").unwrap_or(false) {
             return;
         }
         spawn_local(async move {
-            if ui.run(api::del(&format!("/api/files/{id}"))).await.is_some() {
+            if ui.run(api::del(&format!("/api/files/{}", id.get_value()))).await.is_some() {
                 reload.run(());
             }
         });
@@ -168,7 +168,7 @@ fn FileRow(file: FileItem, reload: Callback<()>) -> impl IntoView {
                         variant=ButtonVariant::Ghost
                         size=ButtonSize::IconSm
                         attr:title="Copy private link"
-                        on:click=move |_| copy(ui, &api::absolute(&format!("/api/files/{id}/raw")))
+                        on:click=move |_| copy(ui, &api::absolute(&format!("/api/files/{}/raw", id.get_value())))
                     >
                         <Copy />
                     </Button>
@@ -179,7 +179,7 @@ fn FileRow(file: FileItem, reload: Callback<()>) -> impl IntoView {
                         <Trash2 />
                     </Button>
                 </div>
-                <ShareDialog open api_path=format!("/api/files/{id}/share") link_prefix="/api/public/files/" token />
+                <ShareDialog open api_path=format!("/api/files/{}/share", file.id) link_prefix="/api/public/files/" token />
             </TableCell>
         </TableRow>
     }

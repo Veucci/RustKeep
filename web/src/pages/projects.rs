@@ -20,7 +20,7 @@ use crate::components::ui::skeleton::Skeleton;
 use crate::components::ui::textarea::Textarea;
 use crate::pages::files::FileManager;
 use crate::pages::notes::{NotesList, View};
-use crate::widgets::{Modal, PageHeader, Ui, fmt_time, use_ui};
+use crate::widgets::{Modal, PageHeader, Ui, fmt_date, use_ui};
 
 const STATUSES: [(&str, &str); 3] = [("active", "Active"), ("paused", "Paused"), ("completed", "Completed")];
 const SELECT_CLASS: &str =
@@ -198,7 +198,7 @@ fn ProjectView(project: ProjectItem) -> impl IntoView {
     };
 
     view! {
-        <div class="flex flex-col gap-6 mx-auto max-w-7xl page-enter">
+        <div class="flex flex-col gap-6 mx-auto max-w-screen-2xl page-enter">
             <div class="flex flex-wrap gap-3 items-start">
                 <div class="flex flex-col flex-1 gap-1 min-w-64">
                     <Input
@@ -471,7 +471,7 @@ fn TaskCard(task: Task, done: bool, ctx: BoardCtx) -> impl IntoView {
     let due_class = if overdue { "bg-destructive/10 text-destructive" } else { "bg-muted text-muted-foreground" };
     let description = task.description.trim().to_owned();
     let has_description = !description.is_empty();
-    let created = fmt_time(task.created).split(' ').next().unwrap_or_default().to_owned();
+    let created = fmt_date(task.created);
 
     view! {
         <div
