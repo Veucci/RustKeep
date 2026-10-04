@@ -24,12 +24,11 @@ COPY web ./
 RUN touch src/main.rs && trunk build --release && gzip -k9 dist/*.wasm dist/*.js dist/*.css
 
 FROM alpine:3.22
-RUN apk add --no-cache ca-certificates && adduser -D -H -u 10001 rustkeep && mkdir /data && chown rustkeep /data
+RUN apk add --no-cache ca-certificates && mkdir /data
 COPY --from=server /app/target/release/rustkeep /usr/local/bin/rustkeep
 COPY --from=web /web/dist /app/web/dist
 WORKDIR /app
 ENV DATA_DIR=/data STATIC_DIR=/app/web/dist PORT=8080
 VOLUME /data
 EXPOSE 8080
-USER rustkeep
 CMD ["rustkeep"]
