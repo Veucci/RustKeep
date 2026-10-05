@@ -11,7 +11,7 @@ use crate::components::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::components::ui::card::{Card, CardContent, CardDescription, CardHeader, CardTitle};
 use crate::components::ui::progress::Progress;
 use crate::components::ui::skeleton::Skeleton;
-use crate::pages::files::FileItem;
+use crate::pages::drive::FileItem;
 use crate::pages::notes::NoteItem;
 use crate::pages::projects::{ProjectItem, percent};
 use crate::pages::reminders::{Reminder, ReminderLink};

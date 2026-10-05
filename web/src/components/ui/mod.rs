@@ -9,6 +9,5 @@ pub mod progress;
 pub mod separator;
 pub mod sidenav;
 pub mod skeleton;
-pub mod table;
 pub mod textarea;
 pub mod theme_toggle;

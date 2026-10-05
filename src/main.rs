@@ -4,6 +4,7 @@ mod auth;
 mod board;
 mod dashboard;
 mod files;
+mod folders;
 mod migrate;
 mod notes;
 mod projects;
@@ -78,11 +79,15 @@ CREATE TABLE IF NOT EXISTS notes (
   body TEXT NOT NULL DEFAULT '', secret INTEGER NOT NULL DEFAULT 0, archived INTEGER NOT NULL DEFAULT 0,
   trashed_at INTEGER, rev INTEGER NOT NULL DEFAULT 0, rev_client TEXT, updated INTEGER NOT NULL DEFAULT (unixepoch()),
   share_token TEXT UNIQUE, share_expires INTEGER, pinned INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS folders (
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), parent_id TEXT REFERENCES folders(id),
+  name TEXT NOT NULL, created INTEGER NOT NULL DEFAULT (unixepoch()), starred INTEGER NOT NULL DEFAULT 0,
+  share_token TEXT UNIQUE, share_expires INTEGER);
 CREATE TABLE IF NOT EXISTS files (
   id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), project_id TEXT REFERENCES projects(id),
-  name TEXT NOT NULL, mime TEXT NOT NULL,
+  folder_id TEXT REFERENCES folders(id), name TEXT NOT NULL, mime TEXT NOT NULL,
   size INTEGER NOT NULL, key TEXT NOT NULL, created INTEGER NOT NULL DEFAULT (unixepoch()),
-  share_token TEXT UNIQUE, share_expires INTEGER, archived INTEGER NOT NULL DEFAULT 0);
+  share_token TEXT UNIQUE, share_expires INTEGER, archived INTEGER NOT NULL DEFAULT 0, starred INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS vault (
   id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), name TEXT NOT NULL, value TEXT NOT NULL,
   note TEXT NOT NULL DEFAULT '', created INTEGER NOT NULL DEFAULT (unixepoch()));
@@ -94,6 +99,8 @@ CREATE TABLE IF NOT EXISTS registrations (
   origin TEXT NOT NULL, created INTEGER NOT NULL DEFAULT (unixepoch()));
 CREATE TABLE IF NOT EXISTS blocked_emails (email TEXT PRIMARY KEY, created INTEGER NOT NULL DEFAULT (unixepoch()));
 CREATE INDEX IF NOT EXISTS notes_user ON notes(user_id);
+CREATE INDEX IF NOT EXISTS files_user ON files(user_id, folder_id);
+CREATE INDEX IF NOT EXISTS folders_parent ON folders(parent_id);
 CREATE INDEX IF NOT EXISTS reminders_due ON reminders(sent, remind_at);
 CREATE INDEX IF NOT EXISTS tasks_project ON tasks(project_id, column_id, position);
 ";
@@ -143,11 +150,16 @@ fn api() -> Router<Arc<App>> {
         .route("/api/notes/{id}/share", post(notes::share).delete(notes::unshare))
         .route("/api/public/notes/{token}", get(notes::public_get).put(notes::public_update))
         .route("/api/files", get(files::list).post(files::upload).layer(DefaultBodyLimit::disable()))
-        .route("/api/files/{id}", delete(files::remove))
+        .route("/api/files/{id}", put(files::update).delete(files::remove))
         .route("/api/files/{id}/action/{action}", post(files::action))
         .route("/api/files/{id}/raw", get(files::raw))
         .route("/api/files/{id}/share", post(files::share).delete(files::unshare))
         .route("/api/public/files/{token}", get(files::public_raw))
+        .route("/api/folders", get(folders::list).post(folders::create))
+        .route("/api/folders/{id}", put(folders::update).delete(folders::remove))
+        .route("/api/folders/{id}/share", post(folders::share).delete(folders::unshare))
+        .route("/api/public/folders/{token}", get(folders::public_list))
+        .route("/api/public/folders/{token}/files/{id}", get(folders::public_raw))
         .route("/api/vault", get(vault::list).post(vault::create))
         .route("/api/vault/{id}", get(vault::reveal).delete(vault::remove))
         .route("/api/reminders", get(reminders::list).post(reminders::create))

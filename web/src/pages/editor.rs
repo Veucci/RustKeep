@@ -261,7 +261,7 @@ pub fn MdEditor(
         input.set_value("");
         let project = upload_project.and_then(|p| p.get_untracked());
         spawn_local(async move {
-            let Some(saved) = ui.run(api::upload(files, project)).await else { return };
+            let Some(saved) = ui.run(api::upload(files, project, None)).await else { return };
             let links: String = saved
                 .iter()
                 .map(|f| {

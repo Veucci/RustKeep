@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::St;
 use crate::auth::User;
-use crate::files::FileItem;
+use crate::files::{FILE_COLUMNS, FileItem};
 use crate::notes::NoteItem;
 use crate::projects::{PROJECT_SELECT, Project};
 use crate::reminders::Reminder;
@@ -87,8 +87,7 @@ pub async fn get(app: St, user: User) -> Res<Json<Dashboard>> {
         .await?,
         files: all(
             db,
-            "SELECT id, name, mime, size, project_id, created, share_token, share_expires, archived FROM files \
-             WHERE user_id = ?1 AND archived = 0 ORDER BY created DESC LIMIT 5",
+            &format!("SELECT {FILE_COLUMNS} FROM files WHERE user_id = ?1 AND archived = 0 ORDER BY created DESC LIMIT 5"),
             params![u],
         )
         .await?,

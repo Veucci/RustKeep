@@ -20,6 +20,24 @@ use crate::{App, St};
 #[derive(Deserialize)]
 pub struct ListQ {
     project: Option<String>,
+    folder: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct Edit {
+    pub name: String,
+    pub parent: Option<String>,
+    pub starred: bool,
+}
+
+impl Edit {
+    pub fn clean_name(&self) -> Res<&str> {
+        let name = self.name.trim();
+        if name.is_empty() || name.chars().count() > 255 || name.contains('/') {
+            return Err(bad("Invalid name"));
+        }
+        Ok(name)
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -33,20 +51,22 @@ pub struct FileItem {
     share_token: Option<String>,
     share_expires: Option<i64>,
     archived: i64,
+    folder_id: Option<String>,
+    starred: i64,
 }
 
+pub const FILE_COLUMNS: &str =
+    "id, name, mime, size, project_id, created, share_token, share_expires, archived, folder_id, starred";
+
 pub async fn list(app: St, user: User, Query(q): Query<ListQ>) -> Res<Json<Vec<FileItem>>> {
-    let rows = all(
-        &app.db,
-        "SELECT id, name, mime, size, project_id, created, share_token, share_expires, archived FROM files \
-         WHERE user_id = ?1 AND (?2 IS NULL OR project_id = ?2) ORDER BY created DESC",
-        params![user.id.as_str(), q.project],
-    )
-    .await?;
+    let sql = format!(
+        "SELECT {FILE_COLUMNS} FROM files WHERE user_id = ?1 AND (?2 IS NULL OR project_id = ?2) ORDER BY created DESC"
+    );
+    let rows = all(&app.db, &sql, params![user.id.as_str(), q.project]).await?;
     Ok(Json(rows))
 }
 
-fn path_of(app: &App, key: &str) -> PathBuf {
+pub fn path_of(app: &App, key: &str) -> PathBuf {
     app.cfg.data_dir.join("files").join(key)
 }
 
@@ -78,9 +98,10 @@ pub async fn upload(app: St, user: User, Query(q): Query<ListQ>, mut mp: Multipa
         let id = uuid();
         app.db
             .execute(
-                "INSERT INTO files (id, user_id, project_id, name, mime, size, key) \
-                 VALUES (?1, ?2, (SELECT id FROM projects WHERE id = ?3 AND user_id = ?2), ?4, ?5, ?6, ?7)",
-                params![id.as_str(), user.id.as_str(), q.project.as_deref(), name.clone(), mime, size, key],
+                "INSERT INTO files (id, user_id, project_id, folder_id, name, mime, size, key) \
+                 VALUES (?1, ?2, (SELECT id FROM projects WHERE id = ?3 AND user_id = ?2), \
+                 (SELECT id FROM folders WHERE id = ?4 AND user_id = ?2), ?5, ?6, ?7, ?8)",
+                params![id.as_str(), user.id.as_str(), q.project.as_deref(), q.folder.as_deref(), name.clone(), mime, size, key],
             )
             .await?;
         saved.push(json!({ "id": id, "name": name }));
@@ -92,7 +113,7 @@ pub async fn upload(app: St, user: User, Query(q): Query<ListQ>, mut mp: Multipa
 }
 
 #[derive(Deserialize)]
-struct Stored {
+pub struct Stored {
     name: String,
     mime: String,
     key: String,
@@ -109,7 +130,12 @@ fn disposition(name: &str) -> String {
     format!("inline; filename*=UTF-8''{enc}")
 }
 
-async fn serve(app: &App, f: Stored, req: Request) -> Res<Response> {
+fn inert(mime: &str) -> bool {
+    let media = ["video/", "audio/", "image/"].iter().any(|p| mime.starts_with(p));
+    (media && !mime.contains("svg")) || mime == "application/pdf"
+}
+
+pub async fn serve(app: &App, f: Stored, req: Request) -> Res<Response> {
     let mut res = ServeFile::new(path_of(app, &f.key)).oneshot(req).await?;
     let h = res.headers_mut();
     let mime = HeaderValue::from_str(&f.mime).unwrap_or(HeaderValue::from_static("application/octet-stream"));
@@ -117,7 +143,9 @@ async fn serve(app: &App, f: Stored, req: Request) -> Res<Response> {
     if let Ok(v) = HeaderValue::from_str(&disposition(&f.name)) {
         h.insert(header::CONTENT_DISPOSITION, v);
     }
-    h.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static("sandbox"));
+    if !inert(&f.mime) {
+        h.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static("sandbox"));
+    }
     h.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
     Ok(res.map(Body::new))
 }
@@ -137,6 +165,17 @@ pub async fn public_raw(app: St, Path(t): Path<String>, req: Request) -> Res<Res
     serve(&app, f, req).await
 }
 
+pub async fn update(app: St, user: User, Path(id): Path<String>, Json(r): Json<Edit>) -> Res<Json<Value>> {
+    exec(
+        &app.db,
+        "UPDATE files SET name = ?1, starred = ?2, folder_id = (SELECT id FROM folders WHERE id = ?3 AND user_id = ?5) \
+         WHERE id = ?4 AND user_id = ?5",
+        params![r.clean_name()?, r.starred as i64, r.parent.as_deref(), id.as_str(), user.id.as_str()],
+    )
+    .await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
 pub async fn action(app: St, user: User, Path((id, action)): Path<(String, String)>) -> Res<Json<Value>> {
     let sql = format!("UPDATE files SET {} WHERE id = ?1 AND user_id = ?2", archive_set(&action)?);
     exec(&app.db, &sql, params![id.as_str(), user.id.as_str()]).await?;
@@ -152,26 +191,26 @@ pub async fn remove(app: St, user: User, Path(id): Path<String>) -> Res<Json<Val
 
 #[derive(Deserialize)]
 pub struct ShareReq {
-    expires: Option<i64>,
+    pub expires: Option<i64>,
 }
 
-pub async fn share(app: St, user: User, Path(id): Path<String>, Json(r): Json<ShareReq>) -> Res<Json<Value>> {
+pub async fn set_share(app: &App, table: &str, id: &str, user: &User, expires: Option<i64>) -> Res<Json<Value>> {
     let t = token();
-    exec(
-        &app.db,
-        "UPDATE files SET share_token = ?1, share_expires = ?2 WHERE id = ?3 AND user_id = ?4",
-        params![t.clone(), r.expires, id, user.id.as_str()],
-    )
-    .await?;
+    let sql = format!("UPDATE {table} SET share_token = ?1, share_expires = ?2 WHERE id = ?3 AND user_id = ?4");
+    exec(&app.db, &sql, params![t.clone(), expires, id, user.id.as_str()]).await?;
     Ok(Json(json!({ "token": t })))
 }
 
-pub async fn unshare(app: St, user: User, Path(id): Path<String>) -> Res<Json<Value>> {
-    exec(
-        &app.db,
-        "UPDATE files SET share_token = NULL, share_expires = NULL WHERE id = ?1 AND user_id = ?2",
-        params![id.as_str(), user.id.as_str()],
-    )
-    .await?;
+pub async fn clear_share(app: &App, table: &str, id: &str, user: &User) -> Res<Json<Value>> {
+    let sql = format!("UPDATE {table} SET share_token = NULL, share_expires = NULL WHERE id = ?1 AND user_id = ?2");
+    exec(&app.db, &sql, params![id, user.id.as_str()]).await?;
     Ok(Json(json!({ "ok": true })))
+}
+
+pub async fn share(app: St, user: User, Path(id): Path<String>, Json(r): Json<ShareReq>) -> Res<Json<Value>> {
+    set_share(&app, "files", &id, &user, r.expires).await
+}
+
+pub async fn unshare(app: St, user: User, Path(id): Path<String>) -> Res<Json<Value>> {
+    clear_share(&app, "files", &id, &user).await
 }
