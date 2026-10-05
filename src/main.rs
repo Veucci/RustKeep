@@ -73,6 +73,10 @@ CREATE TABLE IF NOT EXISTS tasks (
   column_id TEXT NOT NULL REFERENCES board_columns(id), title TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '', due TEXT, created INTEGER NOT NULL DEFAULT (unixepoch()),
   position INTEGER NOT NULL DEFAULT 0, priority INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS subtasks (
+  id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id), title TEXT NOT NULL,
+  done INTEGER NOT NULL DEFAULT 0, position INTEGER NOT NULL DEFAULT 0, created INTEGER NOT NULL DEFAULT (unixepoch()),
+  description TEXT NOT NULL DEFAULT '', due TEXT, priority INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS notes (
   id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), project_id TEXT REFERENCES projects(id),
   title TEXT NOT NULL DEFAULT '',
@@ -103,6 +107,7 @@ CREATE INDEX IF NOT EXISTS files_user ON files(user_id, folder_id);
 CREATE INDEX IF NOT EXISTS folders_parent ON folders(parent_id);
 CREATE INDEX IF NOT EXISTS reminders_due ON reminders(sent, remind_at);
 CREATE INDEX IF NOT EXISTS tasks_project ON tasks(project_id, column_id, position);
+CREATE INDEX IF NOT EXISTS subtasks_task ON subtasks(task_id, position);
 ";
 
 fn env(key: &str) -> Option<String> {
@@ -175,6 +180,8 @@ fn api() -> Router<Arc<App>> {
         .route("/api/columns/{id}/move/{dir}", post(board::move_column))
         .route("/api/tasks/{id}", put(board::update_task).delete(board::remove_task))
         .route("/api/tasks/{id}/move", post(board::move_task))
+        .route("/api/tasks/{id}/subtasks", get(board::subtasks).post(board::create_subtask))
+        .route("/api/subtasks/{id}", put(board::update_subtask).delete(board::remove_subtask))
         .route("/api/dashboard", get(dashboard::get))
 }
 

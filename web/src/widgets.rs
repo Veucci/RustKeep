@@ -270,11 +270,16 @@ pub fn Toast() -> impl IntoView {
 }
 
 #[component]
-pub fn Modal(open: RwSignal<bool>, #[prop(into)] title: String, children: ChildrenFn) -> impl IntoView {
+pub fn Modal(
+    open: RwSignal<bool>,
+    #[prop(into)] title: String,
+    children: ChildrenFn,
+    #[prop(optional, into)] class: String,
+) -> impl IntoView {
     let title = StoredValue::new(title);
     let children = StoredValue::new(children);
     view! {
-        <ControlledDialog open on_close=Callback::new(move |()| open.set(false)) class="max-w-md">
+        <ControlledDialog open on_close=Callback::new(move |()| open.set(false)) class=format!("max-w-md {class}")>
             <DialogBody>
                 <DialogTitle class="pr-6">{title.get_value()}</DialogTitle>
                 {children.with_value(|children| children())}

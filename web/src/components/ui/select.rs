@@ -18,7 +18,7 @@ pub enum SelectPosition {
 mod components {
     use super::*;
     clx! {SelectLabel, span, "px-2 py-1.5 text-sm font-medium data-inset:pl-8", "mb-1"}
-    clx! {SelectItem, li, "inline-flex gap-2 items-center w-full rounded-sm px-2 py-1.5 text-sm no-underline transition-colors duration-200 text-popover-foreground hover:bg-accent hover:text-accent-foreground [&_svg:not([class*='size-'])]:size-4"}
+    clx! {SelectItem, li, "flex gap-2 items-center w-full rounded-sm px-2 py-1.5 text-sm no-underline transition-colors duration-200 text-popover-foreground hover:bg-accent hover:text-accent-foreground [&_svg:not([class*='size-'])]:size-4"}
 }
 
 pub use components::*;
@@ -59,7 +59,7 @@ pub fn SelectOption(
     let ctx = expect_context::<SelectContext>();
 
     let merged_class = tw_merge!(
-        "group inline-flex gap-2 items-center w-full rounded-sm px-2 py-1.5 text-sm cursor-pointer no-underline transition-colors duration-200 text-popover-foreground hover:bg-accent hover:text-accent-foreground [&_svg:not([class*='size-'])]:size-4",
+        "group flex gap-2 items-center w-full rounded-sm px-2 py-1.5 text-sm cursor-pointer no-underline transition-colors duration-200 text-popover-foreground hover:bg-accent hover:text-accent-foreground [&_svg:not([class*='size-'])]:size-4",
         class
     );
 

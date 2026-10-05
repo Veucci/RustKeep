@@ -883,7 +883,7 @@ fn ItemMenu() -> impl IntoView {
             let star_label = if e.with_value(Entry::starred) { "Remove from Starred" } else { "Add to Starred" };
             view! {
                 <div class="fixed inset-0 z-40" on:click=move |_| d.menu.set(None) on:contextmenu=move |ev: MouseEvent| { ev.prevent_default(); d.menu.set(None); } />
-                <div class="fixed z-50 p-1 w-56 rounded-lg border shadow-lg bg-popover text-popover-foreground pop-in [&_svg]:size-4 [&_svg]:text-muted-foreground" style=style>
+                <div class="overflow-y-auto fixed z-50 p-1 w-56 rounded-lg border shadow-lg max-h-[calc(100vh-2rem)] bg-popover text-popover-foreground pop-in [&_svg]:size-4 [&_svg]:text-muted-foreground" style=style>
                     <MenuItem label=if is_dir { "Open" } else { "Preview" } action=act(|d, e| d.open(&e))>{if is_dir { view! { <FolderOpen /> }.into_any() } else { view! { <Eye /> }.into_any() }}</MenuItem>
                     <Show when=move || !is_dir>
                         <a class=MENU_BTN href=raw_url(e.with_value(|e| e.id().to_owned()).as_str()) download=e.with_value(|e| e.name().to_owned()) on:click=move |_| d.menu.set(None)>

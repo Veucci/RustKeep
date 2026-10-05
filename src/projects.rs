@@ -95,6 +95,7 @@ pub async fn action(app: St, user: User, Path((id, action)): Path<(String, Strin
 pub async fn remove(app: St, user: User, Path(id): Path<String>) -> Res<Json<Value>> {
     exec(&app.db, "DELETE FROM projects WHERE id = ?1 AND user_id = ?2", params![id.as_str(), user.id.as_str()]).await?;
     for sql in [
+        "DELETE FROM subtasks WHERE task_id IN (SELECT id FROM tasks WHERE project_id = ?1)",
         "DELETE FROM tasks WHERE project_id = ?1",
         "DELETE FROM board_columns WHERE project_id = ?1",
         "UPDATE notes SET project_id = NULL WHERE project_id = ?1",

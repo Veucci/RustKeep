@@ -10,6 +10,7 @@ use crate::projects::find;
 use crate::util::{Res, all, bad, exec, one, uuid};
 
 const OWNED: &str = "project_id IN (SELECT id FROM projects WHERE user_id = ?2)";
+const OWNED_TASKS: &str = "(SELECT t.id FROM tasks t JOIN projects p ON p.id = t.project_id WHERE p.user_id = ?2)";
 const COLUMN_IN_PROJECT: &str = "EXISTS (SELECT 1 FROM board_columns c JOIN projects p ON p.id = c.project_id \
      WHERE c.id = ?3 AND p.id = ?1 AND p.user_id = ?2)";
 
@@ -55,6 +56,7 @@ pub async fn rename_column(app: St, user: User, Path(id): Path<String>, Json(r):
 
 pub async fn remove_column(app: St, user: User, Path(id): Path<String>) -> Res<Json<Value>> {
     exec(&app.db, &format!("DELETE FROM board_columns WHERE id = ?1 AND {OWNED}"), params![id.as_str(), user.id.as_str()]).await?;
+    app.db.execute("DELETE FROM subtasks WHERE task_id IN (SELECT id FROM tasks WHERE column_id = ?1)", params![id.as_str()]).await?;
     app.db.execute("DELETE FROM tasks WHERE column_id = ?1", params![id.as_str()]).await?;
     Ok(Json(json!({ "ok": true })))
 }
@@ -93,11 +95,15 @@ pub struct Task {
     due: Option<String>,
     created: i64,
     priority: i64,
+    subtasks: i64,
+    subtasks_done: i64,
 }
 
 pub async fn tasks(app: St, user: User, Path(id): Path<String>) -> Res<Json<Vec<Task>>> {
     let sql = format!(
-        "SELECT id, column_id, title, description, due, created, priority FROM tasks \
+        "SELECT id, column_id, title, description, due, created, priority, \
+         (SELECT COUNT(*) FROM subtasks s WHERE s.task_id = tasks.id) AS subtasks, \
+         (SELECT COUNT(*) FROM subtasks s WHERE s.task_id = tasks.id AND s.done = 1) AS subtasks_done FROM tasks \
          WHERE project_id = ?1 AND {OWNED} ORDER BY position, created"
     );
     Ok(Json(all(&app.db, &sql, params![id.as_str(), user.id.as_str()]).await?))
@@ -181,5 +187,64 @@ pub async fn move_task(app: St, user: User, Path(id): Path<String>, Json(r): Jso
 
 pub async fn remove_task(app: St, user: User, Path(id): Path<String>) -> Res<Json<Value>> {
     exec(&app.db, &format!("DELETE FROM tasks WHERE id = ?1 AND {OWNED}"), params![id.as_str(), user.id.as_str()]).await?;
+    app.db.execute("DELETE FROM subtasks WHERE task_id = ?1", params![id.as_str()]).await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Subtask {
+    id: String,
+    title: String,
+    done: i64,
+    description: String,
+    due: Option<String>,
+    priority: i64,
+}
+
+pub async fn subtasks(app: St, user: User, Path(id): Path<String>) -> Res<Json<Vec<Subtask>>> {
+    let sql = format!("SELECT id, title, done, description, due, priority FROM subtasks WHERE task_id = ?1 AND task_id IN {OWNED_TASKS} ORDER BY position, created");
+    Ok(Json(all(&app.db, &sql, params![id.as_str(), user.id.as_str()]).await?))
+}
+
+#[derive(Deserialize)]
+pub struct SubtaskReq {
+    title: String,
+    #[serde(default)]
+    done: bool,
+    #[serde(default)]
+    description: String,
+    due: Option<String>,
+    #[serde(default)]
+    priority: i64,
+}
+
+impl SubtaskReq {
+    fn clean_title(&self) -> Res<&str> {
+        let title = self.title.trim();
+        if title.is_empty() { Err(bad("Subtask title is required")) } else { Ok(title) }
+    }
+}
+
+pub async fn create_subtask(app: St, user: User, Path(id): Path<String>, Json(r): Json<SubtaskReq>) -> Res<Json<Value>> {
+    let sql = format!(
+        "INSERT INTO subtasks (id, task_id, title, position) \
+         SELECT ?3, ?1, ?4, (SELECT COALESCE(MAX(position) + 1, 0) FROM subtasks WHERE task_id = ?1) WHERE ?1 IN {OWNED_TASKS}"
+    );
+    exec(&app.db, &sql, params![id.as_str(), user.id.as_str(), uuid(), r.clean_title()?]).await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+pub async fn update_subtask(app: St, user: User, Path(id): Path<String>, Json(r): Json<SubtaskReq>) -> Res<Json<Value>> {
+    let sql = format!(
+        "UPDATE subtasks SET title = ?3, done = ?4, description = ?5, due = ?6, priority = ?7 WHERE id = ?1 AND task_id IN {OWNED_TASKS}"
+    );
+    let p = params![id.as_str(), user.id.as_str(), r.clean_title()?, r.done as i64, r.description, r.due, r.priority.clamp(0, 3)];
+    exec(&app.db, &sql, p).await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+pub async fn remove_subtask(app: St, user: User, Path(id): Path<String>) -> Res<Json<Value>> {
+    let sql = format!("DELETE FROM subtasks WHERE id = ?1 AND task_id IN {OWNED_TASKS}");
+    exec(&app.db, &sql, params![id.as_str(), user.id.as_str()]).await?;
     Ok(Json(json!({ "ok": true })))
 }

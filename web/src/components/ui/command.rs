@@ -59,7 +59,7 @@ pub fn CommandDialogTrigger(children: Children, #[prop(into, optional)] class: S
 pub fn CommandDialog(children: ChildrenFn, #[prop(into, optional)] class: String) -> impl IntoView {
     let context = expect_context::<CommandDialogContext>();
     let merged_class = tw_merge!(
-        "grid fixed z-100 gap-4 p-2 w-full bg-clip-padding rounded-xl border border-none ring-4 shadow-2xl sm:max-w-lg bg-background top-[50%] left-[50%] max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] ring-neutral-200/80 transition-all duration-200 data-[state=closed]:opacity-0 data-[state=closed]:scale-95 data-[state=open]:opacity-100 data-[state=open]:scale-100",
+        "grid overflow-y-auto fixed z-100 gap-4 p-2 w-full max-h-[85vh] bg-clip-padding rounded-xl border border-none ring-4 shadow-2xl sm:max-w-lg bg-background top-[50%] left-[50%] max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] ring-neutral-200/80 transition-all duration-200 data-[state=closed]:opacity-0 data-[state=closed]:scale-95 data-[state=open]:opacity-100 data-[state=open]:scale-100",
         class
     );
 

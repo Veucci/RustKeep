@@ -64,7 +64,7 @@ pub fn MultiSelectOption(
     });
 
     let class = tw_merge!(
-        "group inline-flex gap-2 items-center w-full text-sm text-left transition-colors duration-200 focus:outline-none focus-visible:outline-none text-popover-foreground [&_svg:not([class*='size-'])]:size-4 hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-50",
+        "group flex gap-2 items-center w-full text-sm text-left transition-colors duration-200 focus:outline-none focus-visible:outline-none text-popover-foreground [&_svg:not([class*='size-'])]:size-4 hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-50",
         class
     );
 

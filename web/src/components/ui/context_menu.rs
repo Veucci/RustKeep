@@ -154,7 +154,7 @@ pub fn ContextMenuContent(
 ) -> impl IntoView {
     let ctx = expect_context::<ContextMenuContext>();
 
-    let base_classes = "z-50 p-1 rounded-md border bg-card shadow-md w-[200px] fixed transition-all duration-200 data-[state=closed]:opacity-0 data-[state=closed]:scale-95 data-[state=open]:opacity-100 data-[state=open]:scale-100";
+    let base_classes = "z-50 p-1 rounded-md border bg-card shadow-md w-[200px] max-h-[calc(100vh-2rem)] overflow-y-auto fixed transition-all duration-200 data-[state=closed]:opacity-0 data-[state=closed]:scale-95 data-[state=open]:opacity-100 data-[state=open]:scale-100";
 
     let class = tw_merge!(base_classes, class);
 

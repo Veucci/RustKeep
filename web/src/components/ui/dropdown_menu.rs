@@ -271,7 +271,7 @@ pub fn DropdownMenuContent(
 ) -> impl IntoView {
     let ctx = expect_context::<DropdownMenuContext>();
 
-    let base_classes = "z-50 p-1 rounded-md border bg-card shadow-md h-fit fixed transition-all duration-200 data-[state=closed]:opacity-0 data-[state=closed]:scale-95 data-[state=open]:opacity-100 data-[state=open]:scale-100";
+    let base_classes = "z-50 p-1 rounded-md border bg-card shadow-md h-fit max-h-[calc(100vh-2rem)] overflow-y-auto fixed transition-all duration-200 data-[state=closed]:opacity-0 data-[state=closed]:scale-95 data-[state=open]:opacity-100 data-[state=open]:scale-100";
     let width_class = match ctx.align {
         DropdownMenuAlign::Center => "min-w-full",
         _ => "w-[180px]",

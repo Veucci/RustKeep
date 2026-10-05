@@ -5,7 +5,7 @@ use serde_json::json;
 
 use crate::api::{self, AutoSave, client_id, next_rev};
 use crate::components::ui::theme_toggle::ThemeToggle;
-use crate::pages::editor::{MdEditor, SaveBadge};
+use crate::pages::editor::{RichEditor, SaveBadge};
 use crate::widgets::LogoTile;
 
 #[derive(Clone, Deserialize)]
@@ -52,7 +52,7 @@ pub fn SharedNote() -> impl IntoView {
                             });
                             view! {
                                 <SaveBadge state=saver.state />
-                                <MdEditor title body on_change=save />
+                                <RichEditor title body on_change=save />
                             }
                                 .into_any()
                         }

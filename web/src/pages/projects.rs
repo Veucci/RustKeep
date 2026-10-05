@@ -1,10 +1,11 @@
 use std::cmp::Reverse;
 
 use icons::{
-    Archive, ArchiveRestore, ArrowLeft, Calendar, ChevronLeft, ChevronRight, Download, Flag, FolderKanban, Pencil, Plus,
-    Trash2,
+    Archive, ArchiveRestore, ArrowLeft, Calendar, ChevronLeft, ChevronRight, Download, Flag, FolderKanban, ListChecks,
+    Pencil, Plus, Trash2,
 };
 use leptos::ev::SubmitEvent;
+use leptos::html;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos_router::components::A;
@@ -13,10 +14,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use web_sys::DragEvent;
 
-use crate::api;
+use crate::api::{self, AutoSave};
 use crate::id::Id;
 use crate::components::ui::badge::{Badge, BadgeVariant};
 use crate::components::ui::button::{Button, ButtonSize, ButtonVariant};
+use crate::components::ui::checkbox::Checkbox;
 use crate::components::ui::card::{Card, CardContent, CardDescription, CardHeader, CardTitle};
 use crate::components::ui::date_picker::DatePicker;
 use crate::components::ui::empty::{Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyMediaVariant, EmptyTitle};
@@ -25,6 +27,8 @@ use crate::components::ui::label::Label;
 use crate::components::ui::progress::Progress;
 use crate::components::ui::skeleton::Skeleton;
 use crate::components::ui::textarea::Textarea;
+use crate::md;
+use crate::pages::editor::RichEditor;
 use crate::pages::files::FileManager;
 use crate::pages::notes::{NotesList, View};
 use crate::widgets::{
@@ -41,6 +45,7 @@ const SORTS: Options =
 const TABS: Options = &[("board", "Board"), ("notes", "Notes"), ("files", "Files")];
 const DUE: Options = &[("all", "All tasks"), ("overdue", "Overdue"), ("soon", "Due in 7 days"), ("nodate", "No date")];
 const ORDER: Options = &[("manual", "Manual order"), ("due", "Due date"), ("priority", "Priority"), ("newest", "Newest")];
+const PAGE: usize = 20;
 
 #[derive(Clone, Deserialize)]
 pub struct ProjectItem {
@@ -73,6 +78,22 @@ struct Task {
     priority: i64,
     #[serde(default, skip_serializing)]
     created: i64,
+    #[serde(default, skip_serializing)]
+    subtasks: i64,
+    #[serde(default, skip_serializing)]
+    subtasks_done: i64,
+}
+
+#[derive(Clone, Deserialize)]
+struct Subtask {
+    id: Id,
+    title: String,
+    done: i64,
+    #[serde(default)]
+    description: String,
+    due: Option<String>,
+    #[serde(default)]
+    priority: i64,
 }
 
 fn status_label(s: &str) -> &'static str {
@@ -437,7 +458,7 @@ impl TaskForm {
             description: self.description.get_untracked(),
             due: (!due.is_empty()).then_some(due),
             priority: self.priority.get_untracked(),
-            created: 0,
+            ..Default::default()
         }
     }
 }
@@ -597,6 +618,16 @@ fn BoardColumn(column: Column, ctx: BoardCtx, filters: Filters) -> impl IntoView
     let at_end = move || over() && ctx.over_task.get().is_none() && ctx.dragging.get().is_some();
     let mine = move || filters.apply(ctx.tasks.get().into_iter().filter(|t| t.column_id == id).collect());
     let count = Signal::derive(move || mine().len());
+    let limit = RwSignal::new(PAGE);
+    let hidden = move || count.get().saturating_sub(limit.get());
+    let show_more = move || limit.update(|l| *l += PAGE);
+    let list = NodeRef::<html::Div>::new();
+    let on_scroll = move |_| {
+        let Some(el) = list.get() else { return };
+        if el.scroll_top() + el.client_height() >= el.scroll_height() - 120 && hidden() > 0 {
+            show_more();
+        }
+    };
     let done = Signal::derive(move || ctx.last_column() == Some(id));
     let add = move |ev: SubmitEvent| {
         ev.prevent_default();
@@ -608,7 +639,7 @@ fn BoardColumn(column: Column, ctx: BoardCtx, filters: Filters) -> impl IntoView
 
     view! {
         <div
-            class="flex flex-col gap-2 p-2 w-72 rounded-xl border transition-all duration-200 shrink-0 bg-muted/40"
+            class="flex flex-col gap-2 p-2 w-72 rounded-xl border transition-all duration-200 shrink-0 bg-muted/40 max-h-[calc(100dvh-10rem)]"
             class=("ring-2", over)
             class=("ring-primary/30", over)
             class=("bg-muted", over)
@@ -625,8 +656,24 @@ fn BoardColumn(column: Column, ctx: BoardCtx, filters: Filters) -> impl IntoView
             }
         >
             <ColumnHeader column ctx count />
-            {move || mine().into_iter().map(|t| view! { <TaskCard task=t done ctx /> }).collect_view()}
-            <div class="h-1 rounded-full transition-all bg-primary" class=("opacity-0", move || !at_end()) />
+            <div
+                node_ref=list
+                class="flex overflow-y-auto flex-col flex-1 gap-2 px-1 py-0.5 -mx-1 min-h-0"
+                on:scroll=on_scroll
+                on:dragover=move |ev: DragEvent| {
+                    if ev.target() == ev.current_target() {
+                        ctx.over_task.set(None);
+                    }
+                }
+            >
+                {move || mine().into_iter().take(limit.get()).map(|t| view! { <TaskCard task=t done ctx /> }).collect_view()}
+                <Show when=move || hidden() != 0>
+                    <Button variant=ButtonVariant::Ghost size=ButtonSize::Sm class="shrink-0 text-muted-foreground" on:click=move |_| show_more()>
+                        {move || format!("Show {} more", hidden().min(PAGE))}
+                    </Button>
+                </Show>
+                <div class="h-1 rounded-full transition-all shrink-0 bg-primary" class=("opacity-0", move || !at_end()) />
+            </div>
             <form on:submit=add on:dragover=move |_| ctx.over_task.set(None)>
                 <Input
                     class="bg-transparent border-transparent shadow-none hover:bg-background focus:bg-background dark:bg-transparent"
@@ -671,8 +718,10 @@ fn DueChip(due: String, done: bool) -> impl IntoView {
 fn TaskCard(task: Task, done: Signal<bool>, ctx: BoardCtx) -> impl IntoView {
     let id = task.id;
     let edit_task = task.clone();
-    let description = task.description.trim().to_owned();
+    let cover = md::first_image(&task.description);
+    let description = md::plain(&task.description);
     let has_description = !description.is_empty();
+    let subtasks = (task.subtasks > 0).then(|| format!("{}/{}", task.subtasks_done, task.subtasks));
     let created = fmt_date(task.created);
     let priority = task.priority;
     let column = task.column_id;
@@ -691,10 +740,10 @@ fn TaskCard(task: Task, done: Signal<bool>, ctx: BoardCtx) -> impl IntoView {
                 ctx.drop_at(column, Some(id));
             }
         >
-            <div class="h-1 rounded-full transition-all bg-primary" class=("hidden", move || !before()) />
+            <div class="h-1 rounded-full transition-all shrink-0 bg-primary" class=("hidden", move || !before()) />
             <div
                 draggable="true"
-                class="flex flex-col gap-2 p-3 text-sm rounded-lg border shadow-xs cursor-grab active:cursor-grabbing bg-card lift animate-in fade-in-0 zoom-in-95"
+                class="flex flex-col gap-2 p-3 text-sm rounded-lg border shadow-xs shrink-0 cursor-grab active:cursor-grabbing bg-card lift animate-in fade-in-0 zoom-in-95"
                 class=("opacity-40", move || ctx.dragging.get() == Some(id))
                 on:dragstart=move |ev: DragEvent| {
                     if let Some(dt) = ev.data_transfer() {
@@ -705,11 +754,12 @@ fn TaskCard(task: Task, done: Signal<bool>, ctx: BoardCtx) -> impl IntoView {
                 on:dragend=move |_| ctx.end_drag()
                 on:click=move |_| ctx.form.edit(edit_task.clone())
             >
+                {cover.map(|src| view! { <img src=src alt="" loading="lazy" draggable="false" class="object-cover w-full h-32 rounded-md bg-muted" /> })}
                 <span class="font-medium leading-snug" class=("line-through", done) class=("text-muted-foreground", done)>
                     {task.title}
                 </span>
                 <Show when=move || has_description>
-                    <p class="text-xs whitespace-pre-line text-muted-foreground line-clamp-4">{description.clone()}</p>
+                    <p class="text-xs text-muted-foreground line-clamp-3">{description.clone()}</p>
                 </Show>
                 <div class="flex flex-wrap gap-2 items-center text-xs text-muted-foreground">
                     <Show when=move || priority != 0>
@@ -719,6 +769,12 @@ fn TaskCard(task: Task, done: Signal<bool>, ctx: BoardCtx) -> impl IntoView {
                         </span>
                     </Show>
                     {task.due.map(|d| view! { {move || view! { <DueChip due=d.clone() done=done.get() /> }} })}
+                    {subtasks.map(|s| view! {
+                        <span class="inline-flex gap-1 items-center py-0.5 px-1.5 rounded-md bg-muted">
+                            <ListChecks class="size-3" />
+                            {s}
+                        </span>
+                    })}
                     <span class="ml-auto">{created}</span>
                 </div>
             </div>
@@ -729,6 +785,8 @@ fn TaskCard(task: Task, done: Signal<bool>, ctx: BoardCtx) -> impl IntoView {
 #[component]
 fn TaskModal(ctx: BoardCtx) -> impl IntoView {
     let form = ctx.form;
+    let upload_project = RwSignal::new(Some(ctx.project));
+    let cover = move || md::first_image(&form.description.get());
     let remove = move |_| {
         ctx.ui.confirm_delete("This task will be deleted.", move || {
             let id = form.id.get_untracked();
@@ -742,20 +800,20 @@ fn TaskModal(ctx: BoardCtx) -> impl IntoView {
         form.open.set(false);
         ctx.save_task(form.task());
     };
-    let submit = move |ev: SubmitEvent| {
-        ev.prevent_default();
+    let save = move |_| {
         form.open.set(false);
         ctx.save_task(form.task());
     };
 
     view! {
-        <Modal open=form.open title="Edit task">
-            <form class="flex flex-col gap-3" on:submit=submit>
-                <Label>"Title"</Label>
-                <Input bind_value=form.title required=true />
-                <Label>"Description"</Label>
-                <Textarea bind_value=form.description rows=4u32 />
-                <div class="grid grid-cols-2 gap-3">
+        <Modal open=form.open title="Edit task" class="max-w-[min(72rem,calc(100%-2rem))]">
+            <div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_17rem]">
+                <div class="flex flex-col gap-4 min-w-0">
+                    <RichEditor title=form.title body=form.description on_change=Callback::new(|_| ()) upload_project allow_upload=true compact=true min_height="min-h-72" />
+                    <Subtasks ctx />
+                </div>
+                <aside class="flex flex-col gap-4">
+                    {move || cover().map(|src| view! { <img src=src alt="" class="object-cover w-full h-40 rounded-lg border bg-muted" /> })}
                     <div class="flex flex-col gap-2">
                         <Label>"Due date"</Label>
                         <DatePicker bind_value=form.due />
@@ -769,7 +827,7 @@ fn TaskModal(ctx: BoardCtx) -> impl IntoView {
                             on_change=Callback::new(move |picked: String| form.priority.set(picked.parse().unwrap_or_default()))
                         />
                     </div>
-                    <div class="flex flex-col col-span-2 gap-2">
+                    <div class="flex flex-col gap-2">
                         <Label>"Column"</Label>
                         <Choice
                             class="w-full"
@@ -780,14 +838,184 @@ fn TaskModal(ctx: BoardCtx) -> impl IntoView {
                             on_change=Callback::new(move |picked: String| form.column.set(picked.parse().unwrap_or_default()))
                         />
                     </div>
-                </div>
-                <div class="flex flex-wrap gap-2 justify-end">
-                    <Button attr:r#type="button" variant=ButtonVariant::Destructive on:click=remove>"Delete"</Button>
-                    <div class="flex-1" />
-                    <Button attr:r#type="button" variant=ButtonVariant::Outline on:click=complete>"Mark done"</Button>
-                    <Button>"Save"</Button>
-                </div>
-            </form>
+                    <div class="flex gap-2 items-center pt-2 lg:mt-auto">
+                        <Button
+                            variant=ButtonVariant::Destructive
+                            size=ButtonSize::Icon
+                            attr:title="Delete task"
+                            attr:aria-label="Delete task"
+                            on:click=remove
+                        >
+                            <Trash2 />
+                        </Button>
+                        <Button class="flex-1" variant=ButtonVariant::Outline on:click=complete>"Mark done"</Button>
+                        <Button class="flex-1" on:click=save>"Save"</Button>
+                    </div>
+                </aside>
+            </div>
         </Modal>
+    }
+}
+
+fn sync_subtasks(ctx: BoardCtx, list: LocalResource<Vec<Subtask>>, fut: impl Future<Output = api::ApiResult<Value>> + 'static) {
+    spawn_local(async move {
+        ctx.ui.run(fut).await;
+        list.refetch();
+        ctx.source.refetch();
+    });
+}
+
+#[component]
+fn Subtasks(ctx: BoardCtx) -> impl IntoView {
+    let form = ctx.form;
+    let list = LocalResource::new(move || {
+        let (id, open) = (form.id.get(), form.open.get());
+        async move {
+            if !open {
+                return Vec::new();
+            }
+            ctx.ui.run(api::get::<Vec<Subtask>>(&format!("/api/tasks/{id}/subtasks"))).await.unwrap_or_default()
+        }
+    });
+    let items = move || list.get().unwrap_or_default();
+    let title = RwSignal::new(String::new());
+    let add = move |ev: SubmitEvent| {
+        ev.prevent_default();
+        let body = json!({ "title": title.get_untracked() });
+        title.set(String::new());
+        let id = form.id.get_untracked();
+        sync_subtasks(ctx, list, async move { api::post::<Value>(&format!("/api/tasks/{id}/subtasks"), &body).await });
+    };
+
+    view! {
+        <div class="flex flex-col gap-2">
+            <div class="flex justify-between items-center">
+                <Label>"Subtasks"</Label>
+                <span class="text-xs tabular-nums text-muted-foreground">
+                    {move || {
+                        let all = items();
+                        format!("{}/{}", all.iter().filter(|s| s.done == 1).count(), all.len())
+                    }}
+                </span>
+            </div>
+            <For each=items key=|s| s.id let(subtask)>
+                <SubtaskRow subtask ctx list />
+            </For>
+            <form on:submit=add>
+                <Input placeholder="+ Add subtask" bind_value=title />
+            </form>
+        </div>
+    }
+}
+
+#[component]
+fn SubtaskRow(subtask: Subtask, ctx: BoardCtx, list: LocalResource<Vec<Subtask>>) -> impl IntoView {
+    let id = subtask.id;
+    let path = StoredValue::new(format!("/api/subtasks/{id}"));
+    let title = RwSignal::new(subtask.title);
+    let done = RwSignal::new(subtask.done == 1);
+    let description = RwSignal::new(subtask.description);
+    let due = RwSignal::new(subtask.due.unwrap_or_default());
+    let priority = RwSignal::new(subtask.priority);
+    let open = RwSignal::new(false);
+    let upload_project = RwSignal::new(Some(ctx.project));
+    let saver = AutoSave::new();
+    let payload = move || {
+        let due = due.get_untracked();
+        json!({
+            "title": title.get_untracked(), "done": done.get_untracked(), "description": description.get_untracked(),
+            "due": (!due.is_empty()).then_some(due), "priority": priority.get_untracked(),
+        })
+    };
+    let save = move || saver.send(path.get_value(), payload());
+    Effect::new(move |first: Option<()>| {
+        due.track();
+        priority.track();
+        if first.is_some() {
+            save();
+        }
+    });
+    let toggle = Callback::new(move |checked: bool| {
+        done.set(checked);
+        let body = payload();
+        sync_subtasks(ctx, list, async move { api::put::<Value>(&path.get_value(), &body).await });
+    });
+    let remove = move |_| {
+        ctx.ui.confirm_delete("This subtask will be deleted.", move || {
+            sync_subtasks(ctx, list, async move { api::del(&path.get_value()).await });
+        });
+    };
+
+    view! {
+        <div class="rounded-lg border bg-card">
+            <div class="flex gap-1.5 items-center py-1 pr-1 pl-1.5 group/sub">
+                <Button
+                    variant=ButtonVariant::Ghost
+                    size=ButtonSize::IconXs
+                    attr:title=move || if open.get() { "Hide details" } else { "Show details" }
+                    attr:aria-expanded=move || open.get().to_string()
+                    on:click=move |_| open.update(|o| *o = !*o)
+                >
+                    <span class="flex transition-transform" class=("rotate-90", move || open.get())>
+                        <ChevronRight />
+                    </span>
+                </Button>
+                <Checkbox aria_label="Done" checked=done on_checked_change=toggle />
+                {move || {
+                    let text = if done.get() { "line-through text-muted-foreground" } else { "" };
+                    view! {
+                        <Input
+                            class=format!("h-8 bg-transparent border-transparent shadow-none hover:border-input focus:bg-background dark:bg-transparent {text}")
+                            bind_value=title
+                            on:change=move |_| save()
+                        />
+                    }
+                }}
+                {move || (priority.get() != 0).then(|| view! {
+                    <span class=format!("inline-flex gap-1 items-center py-0.5 px-1.5 text-xs rounded-md shrink-0 {}", priority_class(priority.get()))>
+                        <Flag class="size-3" />
+                        {priority_label(priority.get())}
+                    </span>
+                })}
+                {move || (!due.get().is_empty()).then(|| view! { <span class="text-xs shrink-0"><DueChip due=due.get() done=done.get() /></span> })}
+                <Button
+                    variant=ButtonVariant::Ghost
+                    size=ButtonSize::IconXs
+                    class="opacity-0 group-hover/sub:opacity-100 focus-visible:opacity-100"
+                    attr:title="Delete subtask"
+                    on:click=remove
+                >
+                    <Trash2 />
+                </Button>
+            </div>
+            <Show when=move || open.get()>
+                <div class="flex flex-col gap-3 px-3 pt-1 pb-3 animate-in fade-in-0">
+                    <RichEditor
+                        body=description
+                        on_change=Callback::new(move |_| save())
+                        upload_project
+                        allow_upload=true
+                        compact=true
+                        min_height="min-h-28"
+                        placeholder="Add details..."
+                    />
+                    <div class="grid gap-3 sm:grid-cols-2">
+                        <div class="flex flex-col gap-2">
+                            <Label>"Due date"</Label>
+                            <DatePicker bind_value=due />
+                        </div>
+                        <div class="flex flex-col gap-2">
+                            <Label>"Priority"</Label>
+                            <Choice
+                                class="w-full"
+                                options={PRIORITIES.iter().map(|(key, label)| (key.to_string(), (*label).to_owned())).collect::<Vec<_>>()}
+                                value=Signal::derive(move || priority.get().to_string())
+                                on_change=Callback::new(move |picked: String| priority.set(picked.parse().unwrap_or_default()))
+                            />
+                        </div>
+                    </div>
+                </div>
+            </Show>
+        </div>
     }
 }
