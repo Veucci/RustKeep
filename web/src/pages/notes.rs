@@ -216,13 +216,12 @@ fn NoteRow(note: NoteItem, view: View, reload: Callback<()>) -> impl IntoView {
         Callback::new(move |_| ui.act(format!("/api/notes/{}/action/{action}", id.get_value()), move || reload.run(())))
     };
     let purge = Callback::new(move |_| {
-        if !window().confirm_with_message("Delete this note permanently?").unwrap_or(false) {
-            return;
-        }
-        spawn_local(async move {
-            if ui.run(api::del(&format!("/api/notes/{}", id.get_value()))).await.is_some() {
-                reload.run(());
-            }
+        ui.confirm_delete("This note will be deleted permanently.", move || {
+            spawn_local(async move {
+                if ui.run(api::del(&format!("/api/notes/{}", id.get_value()))).await.is_some() {
+                    reload.run(());
+                }
+            });
         });
     });
     let title = if note.title.is_empty() { "Untitled".to_owned() } else { note.title };

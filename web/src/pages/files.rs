@@ -16,6 +16,7 @@ use web_sys::{DragEvent, File, MouseEvent};
 use crate::api;
 use crate::components::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::components::ui::card::Card;
+use crate::components::ui::checkbox::Checkbox;
 use crate::components::ui::empty::{Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyMediaVariant, EmptyTitle};
 use crate::components::ui::input::Input;
 use crate::id::Id;
@@ -294,18 +295,18 @@ impl Drive {
             many => format!("{} items", many.len()),
         };
         let note = if entries.iter().any(Entry::is_dir) { " Folders are deleted with everything inside." } else { "" };
-        if !window().confirm_with_message(&format!("Delete {what} permanently?{note}")).unwrap_or(false) {
-            return;
-        }
-        spawn_local(async move {
-            for e in &entries {
-                if self.ui.run(api::del(&e.api())).await.is_none() {
-                    break;
+        self.ui.confirm_delete(format!("{what} will be deleted permanently.{note}"), move || {
+            let entries = entries.clone();
+            spawn_local(async move {
+                for e in &entries {
+                    if self.ui.run(api::del(&e.api())).await.is_none() {
+                        break;
+                    }
                 }
-            }
-            self.selected.set(Vec::new());
-            self.details.set(None);
-            self.reload();
+                self.selected.set(Vec::new());
+                self.details.set(None);
+                self.reload();
+            });
         });
     }
 
@@ -669,7 +670,7 @@ fn ListView(dirs: Vec<Folder>, docs: Vec<FileItem>) -> impl IntoView {
     view! {
         <Card class="overflow-hidden gap-0 py-0">
             <div class="grid items-center gap-3 px-3 h-10 text-xs font-medium border-b grid-cols-[1.25rem_1fr_2rem] sm:grid-cols-[1.25rem_1fr_9rem_6rem_2rem] bg-muted/50 text-muted-foreground">
-                <input type="checkbox" class="size-4 accent-primary" title="Select all" prop:checked=all on:change=toggle_all />
+                <Checkbox aria_label="Select all" checked=Signal::derive(all) on_checked_change=Callback::new(toggle_all) />
                 <span>"Name"</span>
                 <span class="hidden sm:block">"Created"</span>
                 <span class="hidden text-right sm:block">"Size"</span>
@@ -779,12 +780,11 @@ fn Item(entry: Entry, grid: bool) -> impl IntoView {
         }
     };
     let check = view! {
-        <input
-            type="checkbox"
-            class="size-4 accent-primary"
-            prop:checked=picked
+        <Checkbox
+            aria_label="Select"
+            checked=Signal::derive(picked)
+            on_checked_change=Callback::new(move |_| d.toggle(&id.get_value()))
             on:click=|ev: MouseEvent| ev.stop_propagation()
-            on:change=move |_| d.toggle(&id.get_value())
         />
     };
     let more = view! {

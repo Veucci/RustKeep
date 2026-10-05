@@ -35,7 +35,17 @@
   --sidenav-width: 16rem;
   --sidenav-width-icon: 3rem;
   --success: oklch(0.6 0.15 150);
+  --success-foreground: oklch(0.985 0 0);
+  --success-light: oklch(0.95 0.08 150);
+  --success-dark: oklch(0.35 0.15 150);
   --warning: oklch(0.72 0.16 70);
+  --warning-foreground: oklch(0.985 0 0);
+  --warning-light: oklch(0.95 0.08 70);
+  --warning-dark: oklch(0.4 0.16 70);
+  --info: oklch(0.55 0.18 250);
+  --info-foreground: oklch(0.985 0 0);
+  --info-light: oklch(0.95 0.08 250);
+  --info-dark: oklch(0.35 0.18 250);
 }
 
 .dark {
@@ -67,7 +77,17 @@
   --sidenav-border: oklch(1 0 0 / 10%);
   --sidenav-ring: oklch(0.439 0 0);
   --success: oklch(0.7 0.15 150);
+  --success-foreground: oklch(0.205 0 0);
+  --success-light: oklch(0.25 0.08 150);
+  --success-dark: oklch(0.8 0.15 150);
   --warning: oklch(0.8 0.15 75);
+  --warning-foreground: oklch(0.205 0 0);
+  --warning-light: oklch(0.25 0.08 75);
+  --warning-dark: oklch(0.85 0.15 75);
+  --info: oklch(0.65 0.18 250);
+  --info-foreground: oklch(0.985 0 0);
+  --info-light: oklch(0.25 0.08 250);
+  --info-dark: oklch(0.75 0.18 250);
 }
 
 @theme inline {
@@ -80,7 +100,17 @@
   --color-sidenav-border: var(--sidenav-border);
   --color-sidenav-ring: var(--sidenav-ring);
   --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-success-light: var(--success-light);
+  --color-success-dark: var(--success-dark);
   --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-warning-light: var(--warning-light);
+  --color-warning-dark: var(--warning-dark);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-info-light: var(--info-light);
+  --color-info-dark: var(--info-dark);
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -158,4 +188,13 @@
 
 @utility lift {
   @apply transition-[translate,box-shadow] duration-200 ease-out hover:-translate-y-0.5 hover:shadow-md;
+}
+
+@utility no__scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
 }

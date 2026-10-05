@@ -32,10 +32,11 @@ use crate::components::ui::sidenav::{
 };
 use crate::components::ui::theme_toggle::ThemeToggle;
 use crate::pages::notes::View;
-use crate::widgets::{LogoTile, Toast, Ui, use_ui};
+use crate::widgets::{ConfirmDialog, LogoTile, Toast, Ui, use_ui};
 
 fn main() {
     std::panic::set_hook(Box::new(|info| web_sys::console::error_1(&info.to_string().into())));
+    crate::components::hooks::use_scroll_lock::init();
     leptos::mount::mount_to_body(App);
 }
 
@@ -48,7 +49,12 @@ fn App() -> impl IntoView {
             let _ = el.class_list().toggle_with_force("dark", dark);
         }
     });
-    provide_context(Ui { me: RwSignal::new(None), toast: RwSignal::new(None), crumb: RwSignal::new(None) });
+    provide_context(Ui {
+        me: RwSignal::new(None),
+        toast: RwSignal::new(None),
+        crumb: RwSignal::new(None),
+        confirm: RwSignal::new_local(None),
+    });
 
     view! {
         <Router base=api::base()>
@@ -72,6 +78,7 @@ fn App() -> impl IntoView {
                 </ParentRoute>
             </Routes>
             <Toast />
+            <ConfirmDialog />
         </Router>
     }
 }

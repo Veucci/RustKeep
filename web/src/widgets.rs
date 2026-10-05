@@ -1,7 +1,8 @@
+use std::rc::Rc;
 use std::time::Duration;
 
 use icons::{ArrowUpDown, Search};
-use leptos::ev::{self, SubmitEvent};
+use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos_router::NavigateOptions;
@@ -12,10 +13,17 @@ use serde_json::{Value, json};
 use wasm_bindgen::JsValue;
 
 use crate::api::{self, ApiError};
+use crate::components::ui::alert_dialog::{
+    AlertDialogBody, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+    ControlledAlertDialog,
+};
 use crate::components::ui::button::{Button, ButtonVariant};
 use crate::components::ui::card::{Card, CardContent, CardDescription, CardHeader, CardTitle};
+use crate::components::ui::date_picker::DateTimePicker;
+use crate::components::ui::dialog::{ControlledDialog, DialogBody, DialogTitle};
 use crate::components::ui::input::{Input, InputType};
 use crate::components::ui::label::Label;
+use crate::components::ui::select::{Select, SelectContent, SelectGroup, SelectOption, SelectTrigger};
 use crate::components::ui::skeleton::Skeleton;
 
 #[derive(Clone, Deserialize)]
@@ -26,14 +34,25 @@ pub struct Me {
     pub pin_ok: bool,
 }
 
+#[derive(Clone)]
+pub struct ConfirmRequest {
+    message: String,
+    action: Rc<dyn Fn()>,
+}
+
 #[derive(Clone, Copy)]
 pub struct Ui {
     pub me: RwSignal<Option<Me>>,
     pub toast: RwSignal<Option<String>>,
     pub crumb: RwSignal<Option<(String, String)>>,
+    pub confirm: RwSignal<Option<ConfirmRequest>, LocalStorage>,
 }
 
 impl Ui {
+    pub fn confirm_delete(&self, message: impl Into<String>, action: impl Fn() + 'static) {
+        self.confirm.set(Some(ConfirmRequest { message: message.into(), action: Rc::new(action) }));
+    }
+
     pub fn notify(&self, msg: impl Into<String>) {
         let toast = self.toast;
         toast.set(Some(msg.into()));
@@ -84,10 +103,11 @@ pub fn create_note(ui: Ui, navigate: impl Fn(&str, NavigateOptions) + 'static, b
     });
 }
 
-pub const SELECT_CLASS: &str =
-    "px-2 h-9 text-sm rounded-md border shadow-xs transition-colors bg-background border-input hover:bg-accent dark:bg-input/30";
-
 pub type Options = &'static [(&'static str, &'static str)];
+
+pub fn owned(options: Options) -> Vec<(String, String)> {
+    options.iter().map(|(key, label)| ((*key).to_owned(), (*label).to_owned())).collect()
+}
 
 pub fn query_state(key: &'static str, default: &'static str) -> (Signal<String>, Callback<String>) {
     let query = use_query_map();
@@ -166,17 +186,43 @@ pub fn Segmented(options: Options, value: Signal<String>, on_change: Callback<St
 }
 
 #[component]
+pub fn Choice(
+    #[prop(into)] options: Signal<Vec<(String, String)>>,
+    #[prop(into)] value: Signal<String>,
+    on_change: Callback<String>,
+    #[prop(into, optional)] class: String,
+) -> impl IntoView {
+    let label = move || {
+        let current = value.get();
+        options.with(|options| options.iter().find(|(key, _)| *key == current).map(|(_, label)| label.clone()))
+    };
+    view! {
+        <Select
+            class=class
+            value=Signal::derive(move || Some(value.get()))
+            on_change=Callback::new(move |picked: Option<String>| on_change.run(picked.unwrap_or_default()))
+        >
+            <SelectTrigger>
+                <span class="truncate">{label}</span>
+            </SelectTrigger>
+            <SelectContent class="w-auto max-w-80 whitespace-nowrap">
+                <SelectGroup>
+                    <For each=move || options.get() key=|(key, _)| key.clone() let((key, label))>
+                        <SelectOption value=key>{label}</SelectOption>
+                    </For>
+                </SelectGroup>
+            </SelectContent>
+        </Select>
+    }
+}
+
+#[component]
 pub fn SortSelect(options: Options, value: Signal<String>, on_change: Callback<String>) -> impl IntoView {
     view! {
-        <label class="flex gap-1.5 items-center text-muted-foreground" title="Sort">
-            <ArrowUpDown class="size-4" />
-            <select class=SELECT_CLASS on:change=move |ev| on_change.run(event_target_value(&ev))>
-                {options
-                    .iter()
-                    .map(|(k, l)| view! { <option value=*k selected=move || value.get() == *k>{*l}</option> })
-                    .collect_view()}
-            </select>
-        </label>
+        <div class="flex gap-1.5 items-center" title="Sort">
+            <ArrowUpDown class="size-4 text-muted-foreground" />
+            <Choice options=owned(options) value on_change />
+        </div>
     }
 }
 
@@ -226,25 +272,42 @@ pub fn Toast() -> impl IntoView {
 #[component]
 pub fn Modal(open: RwSignal<bool>, #[prop(into)] title: String, children: ChildrenFn) -> impl IntoView {
     let title = StoredValue::new(title);
-    let esc = window_event_listener(ev::keydown, move |e| {
-        if e.key() == "Escape" && open.get_untracked() {
-            open.set(false);
-        }
-    });
-    on_cleanup(move || esc.remove());
+    let children = StoredValue::new(children);
     view! {
-        <Show when=move || open.get()>
-            <div
-                class="fixed inset-0 z-50 backdrop-blur-[2px] bg-black/50 animate-in fade-in-0 duration-200"
-                on:click=move |_| open.set(false)
-            />
-            <div class="flex fixed inset-0 z-50 justify-center items-center p-4 pointer-events-none">
-                <div class="flex flex-col gap-4 p-6 w-full max-w-md rounded-xl border shadow-lg pointer-events-auto bg-background pop-in">
-                    <h3 class="text-lg font-semibold tracking-tight leading-none">{title.get_value()}</h3>
-                    {children()}
-                </div>
-            </div>
-        </Show>
+        <ControlledDialog open on_close=Callback::new(move |()| open.set(false)) class="max-w-md">
+            <DialogBody>
+                <DialogTitle class="pr-6">{title.get_value()}</DialogTitle>
+                {children.with_value(|children| children())}
+            </DialogBody>
+        </ControlledDialog>
+    }
+}
+
+#[component]
+pub fn ConfirmDialog() -> impl IntoView {
+    let ui = use_ui();
+    let open = Signal::derive(move || ui.confirm.with(Option::is_some));
+    let close = Callback::new(move |()| ui.confirm.set(None));
+    let message = move || ui.confirm.with(|request| request.as_ref().map(|r| r.message.clone()).unwrap_or_default());
+    let accept = move |_| {
+        if let Some(request) = ui.confirm.get_untracked() {
+            ui.confirm.set(None);
+            (request.action)();
+        }
+    };
+    view! {
+        <ControlledAlertDialog open on_close=close class="max-w-md">
+            <AlertDialogBody>
+                <AlertDialogHeader>
+                    <AlertDialogTitle>"Are you sure?"</AlertDialogTitle>
+                    <AlertDialogDescription>{message}</AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                    <Button variant=ButtonVariant::Outline on:click=move |_| close.run(())>"Cancel"</Button>
+                    <Button variant=ButtonVariant::Destructive on:click=accept>"Delete"</Button>
+                </AlertDialogFooter>
+            </AlertDialogBody>
+        </ControlledAlertDialog>
     }
 }
 
@@ -386,7 +449,7 @@ pub fn ShareDialog(
                 None => {
                     view! {
                         <Label>"Expiration date (optional)"</Label>
-                        <Input r#type=InputType::DatetimeLocal bind_value=expires />
+                        <DateTimePicker bind_value=expires />
                         <div class="flex justify-end">
                             <Button on:click=create>"Create link"</Button>
                         </div>
@@ -427,7 +490,7 @@ pub fn ReminderForm(note_id: Option<String>, #[prop(into)] title: String, on_don
             </div>
             <div class="flex flex-col gap-2">
                 <Label>"When"</Label>
-                <Input r#type=InputType::DatetimeLocal bind_value=at required=true />
+                <DateTimePicker bind_value=at class="sm:w-56" />
             </div>
             <Button>"Remind me"</Button>
         </form>

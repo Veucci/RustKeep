@@ -125,13 +125,12 @@ fn VaultRow(item: Item, reload: Callback<()>) -> impl IntoView {
         })
     };
     let remove = move |_| {
-        if !window().confirm_with_message("Delete this secret?").unwrap_or(false) {
-            return;
-        }
-        spawn_local(async move {
-            if ui.run(api::del(&format!("/api/vault/{id}"))).await.is_some() {
-                reload.run(());
-            }
+        ui.confirm_delete("This secret will be deleted permanently.", move || {
+            spawn_local(async move {
+                if ui.run(api::del(&format!("/api/vault/{id}"))).await.is_some() {
+                    reload.run(());
+                }
+            });
         });
     };
 

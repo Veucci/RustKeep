@@ -18,8 +18,9 @@ use crate::id::Id;
 use crate::components::ui::badge::{Badge, BadgeVariant};
 use crate::components::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::components::ui::card::{Card, CardContent, CardDescription, CardHeader, CardTitle};
+use crate::components::ui::date_picker::DatePicker;
 use crate::components::ui::empty::{Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyMediaVariant, EmptyTitle};
-use crate::components::ui::input::{Input, InputType};
+use crate::components::ui::input::Input;
 use crate::components::ui::label::Label;
 use crate::components::ui::progress::Progress;
 use crate::components::ui::skeleton::Skeleton;
@@ -27,8 +28,8 @@ use crate::components::ui::textarea::Textarea;
 use crate::pages::files::FileManager;
 use crate::pages::notes::{NotesList, View};
 use crate::widgets::{
-    Modal, Options, PageHeader, SELECT_CLASS, SearchBox, Segmented, SortSelect, Toolbar, Ui, days_until, due_label,
-    fmt_date, focus_if_new, has, query_state, use_ui,
+    Choice, Modal, Options, PageHeader, SearchBox, Segmented, SortSelect, Toolbar, Ui, days_until, due_label,
+    fmt_date, focus_if_new, has, owned, query_state, use_ui,
 };
 
 const STATUSES: [(&str, &str); 3] = [("active", "Active"), ("paused", "Paused"), ("completed", "Completed")];
@@ -272,14 +273,14 @@ fn ProjectView(project: ProjectItem) -> impl IntoView {
         });
     };
     let remove = move |_| {
-        if !window().confirm_with_message("Delete this project and its board? Notes and files are kept.").unwrap_or(false) {
-            return;
-        }
         let navigate = navigate.clone();
-        spawn_local(async move {
-            if ui.run(api::del(&format!("/api/projects/{id}"))).await.is_some() {
-                navigate("/projects", Default::default());
-            }
+        ui.confirm_delete("This project and its board will be deleted. Notes and files are kept.", move || {
+            let navigate = navigate.clone();
+            spawn_local(async move {
+                if ui.run(api::del(&format!("/api/projects/{id}"))).await.is_some() {
+                    navigate("/projects", Default::default());
+                }
+            });
         });
     };
 
@@ -308,18 +309,14 @@ fn ProjectView(project: ProjectItem) -> impl IntoView {
                         on:change=move |_| save()
                     />
                 </div>
-                <select
-                    class=SELECT_CLASS
-                    on:change=move |ev| {
-                        status.set(event_target_value(&ev));
+                <Choice
+                    options=owned(&STATUSES)
+                    value=status
+                    on_change=Callback::new(move |picked| {
+                        status.set(picked);
                         save();
-                    }
-                >
-                    {STATUSES
-                        .iter()
-                        .map(|(k, l)| view! { <option value=*k selected=move || status.get() == *k>{*l}</option> })
-                        .collect_view()}
-                </select>
+                    })
+                />
                 <Button variant=ButtonVariant::Outline attr:download="" href=api::url(&format!("/api/projects/{id}/export"))>
                     <Download />
                     "Export Excel"
@@ -554,9 +551,9 @@ fn ColumnHeader(column: Column, count: Signal<usize>, ctx: BoardCtx) -> impl Int
     };
     let shift = move |dir: &'static str| ctx.call(async move { api::post::<Value>(&format!("/api/columns/{id}/move/{dir}"), &()).await }, true);
     let remove = move |_| {
-        if window().confirm_with_message("Delete this column and all of its tasks?").unwrap_or(false) {
+        ctx.ui.confirm_delete("This column and all of its tasks will be deleted.", move || {
             ctx.call(async move { api::del(&format!("/api/columns/{id}")).await }, true);
-        }
+        });
     };
 
     view! {
@@ -733,12 +730,11 @@ fn TaskCard(task: Task, done: Signal<bool>, ctx: BoardCtx) -> impl IntoView {
 fn TaskModal(ctx: BoardCtx) -> impl IntoView {
     let form = ctx.form;
     let remove = move |_| {
-        if !window().confirm_with_message("Delete this task?").unwrap_or(false) {
-            return;
-        }
-        let id = form.id.get_untracked();
-        form.open.set(false);
-        ctx.call(async move { api::del(&format!("/api/tasks/{id}")).await }, false);
+        ctx.ui.confirm_delete("This task will be deleted.", move || {
+            let id = form.id.get_untracked();
+            form.open.set(false);
+            ctx.call(async move { api::del(&format!("/api/tasks/{id}")).await }, false);
+        });
     };
     let complete = move |_| {
         let Some(last) = ctx.columns.get_untracked().unwrap_or_default().last().map(|c| c.id) else { return };
@@ -762,29 +758,27 @@ fn TaskModal(ctx: BoardCtx) -> impl IntoView {
                 <div class="grid grid-cols-2 gap-3">
                     <div class="flex flex-col gap-2">
                         <Label>"Due date"</Label>
-                        <Input r#type=InputType::Date bind_value=form.due />
+                        <DatePicker bind_value=form.due />
                     </div>
                     <div class="flex flex-col gap-2">
                         <Label>"Priority"</Label>
-                        <select class=SELECT_CLASS on:change=move |ev| form.priority.set(event_target_value(&ev).parse().unwrap_or_default())>
-                            {PRIORITIES
-                                .iter()
-                                .map(|(k, l)| view! { <option value=k.to_string() selected=move || form.priority.get() == *k>{*l}</option> })
-                                .collect_view()}
-                        </select>
+                        <Choice
+                            class="w-full"
+                            options={PRIORITIES.iter().map(|(key, label)| (key.to_string(), (*label).to_owned())).collect::<Vec<_>>()}
+                            value=Signal::derive(move || form.priority.get().to_string())
+                            on_change=Callback::new(move |picked: String| form.priority.set(picked.parse().unwrap_or_default()))
+                        />
                     </div>
                     <div class="flex flex-col col-span-2 gap-2">
                         <Label>"Column"</Label>
-                        <select class=SELECT_CLASS on:change=move |ev| form.column.set(event_target_value(&ev).parse().unwrap_or_default())>
-                            {move || {
-                                ctx.columns
-                                    .get()
-                                    .unwrap_or_default()
-                                    .into_iter()
-                                    .map(|c| view! { <option value=c.id.to_string() selected=move || form.column.get() == c.id>{c.name}</option> })
-                                    .collect_view()
-                            }}
-                        </select>
+                        <Choice
+                            class="w-full"
+                            options=Signal::derive(move || {
+                                ctx.columns.get().unwrap_or_default().into_iter().map(|c| (c.id.to_string(), c.name)).collect::<Vec<_>>()
+                            })
+                            value=Signal::derive(move || form.column.get().to_string())
+                            on_change=Callback::new(move |picked: String| form.column.set(picked.parse().unwrap_or_default()))
+                        />
                     </div>
                 </div>
                 <div class="flex flex-wrap gap-2 justify-end">

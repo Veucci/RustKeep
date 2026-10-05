@@ -18,7 +18,7 @@ use crate::components::ui::input::Input;
 use crate::components::ui::textarea::Textarea;
 use crate::md;
 use crate::pages::projects::ProjectItem;
-use crate::widgets::{Modal, PinGate, ReminderForm, ShareDialog, use_ui};
+use crate::widgets::{Choice, Modal, PinGate, ReminderForm, ShareDialog, use_ui};
 
 #[derive(Clone, Deserialize)]
 pub struct Note {
@@ -128,22 +128,31 @@ fn EditorBody(note: Note) -> impl IntoView {
         ui.act(format!("/api/notes/{}/action/{action}", id.get_value()), move || pinned.update(|p| *p = !*p));
     };
     let trash = move |_| {
-        if secret && !window().confirm_with_message("Secret notes are deleted permanently. Continue?").unwrap_or(false) {
-            return;
-        }
         let navigate = navigate.clone();
-        spawn_local(async move {
-            let path = format!("/api/notes/{}", id.get_value());
-            let res = if secret { api::del(&path).await } else { api::post::<Value>(&format!("{path}/action/trash"), &()).await };
-            if ui.run(std::future::ready(res)).await.is_some() {
-                navigate(if secret { "/secret" } else { "/notes" }, Default::default());
-            }
-        });
+        let run = move || {
+            let navigate = navigate.clone();
+            spawn_local(async move {
+                let path = format!("/api/notes/{}", id.get_value());
+                let res = if secret { api::del(&path).await } else { api::post::<Value>(&format!("{path}/action/trash"), &()).await };
+                if ui.run(std::future::ready(res)).await.is_some() {
+                    navigate(if secret { "/secret" } else { "/notes" }, Default::default());
+                }
+            });
+        };
+        if secret {
+            ui.confirm_delete("Secret notes are deleted permanently.", run);
+        } else {
+            run();
+        }
     };
-    let pick_project = move |ev| {
-        project.set(event_target_value(&ev).parse::<Id>().ok());
+    let pick_project = Callback::new(move |picked: String| {
+        project.set(picked.parse::<Id>().ok());
         save.run(());
-    };
+    });
+    let project_options = Signal::derive(move || {
+        let projects = projects.get().unwrap_or_default().into_iter().map(|p| (p.id.to_string(), p.name));
+        std::iter::once((String::new(), "No project".to_owned())).chain(projects).collect::<Vec<_>>()
+    });
 
     view! {
         <div class="flex flex-col gap-4 mx-auto max-w-6xl page-enter">
@@ -158,23 +167,11 @@ fn EditorBody(note: Note) -> impl IntoView {
                 <SaveBadge state=saver.state />
                 <div class="flex-1" />
                 <Show when=move || !secret>
-                    <select
-                        class="px-2 h-8 text-sm rounded-md border shadow-xs transition-colors bg-background border-input hover:bg-accent dark:bg-input/30"
-                        on:change=pick_project
-                    >
-                        <option value="" selected=move || project.get().is_none()>"No project"</option>
-                        {move || {
-                            projects
-                                .get()
-                                .unwrap_or_default()
-                                .into_iter()
-                                .map(|p| {
-                                    let pid = p.id;
-                                    view! { <option value=pid.to_string() selected=move || project.get() == Some(pid)>{p.name}</option> }
-                                })
-                                .collect_view()
-                        }}
-                    </select>
+                    <Choice
+                        options=project_options
+                        value=Signal::derive(move || project.get().map(|p| p.to_string()).unwrap_or_default())
+                        on_change=pick_project
+                    />
                     {move || project.get().map(|p| view! {
                         <Button variant=ButtonVariant::Ghost size=ButtonSize::IconSm attr:title="Open project" href=api::url(&format!("/projects/{p}"))>
                             <ExternalLink />

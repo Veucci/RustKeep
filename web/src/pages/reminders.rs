@@ -127,13 +127,12 @@ fn ReminderRow(reminder: Reminder, reload: Callback<()>) -> impl IntoView {
     let id = reminder.id;
     let act = move |action: &'static str| ui.act(format!("/api/reminders/{id}/action/{action}"), move || reload.run(()));
     let remove = move |_| {
-        if !window().confirm_with_message("Delete this reminder?").unwrap_or(false) {
-            return;
-        }
-        spawn_local(async move {
-            if ui.run(api::del(&format!("/api/reminders/{id}"))).await.is_some() {
-                reload.run(());
-            }
+        ui.confirm_delete("This reminder will be deleted.", move || {
+            spawn_local(async move {
+                if ui.run(api::del(&format!("/api/reminders/{id}"))).await.is_some() {
+                    reload.run(());
+                }
+            });
         });
     };
     let pending = reminder.sent == 0;
