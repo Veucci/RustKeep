@@ -554,7 +554,6 @@ fn Board(project: Id) -> impl IntoView {
                 <Input class="bg-background" placeholder="Column name" bind_value=new_column required=true />
             </form>
         </div>
-        <p class="text-xs text-muted-foreground">"Drag cards to reorder them or move them between columns. Click a card to edit it."</p>
         <TaskModal ctx />
     }
 }
