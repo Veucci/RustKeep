@@ -2,6 +2,7 @@
 
 mod auth;
 mod board;
+mod calendar;
 mod dashboard;
 mod export;
 mod files;
@@ -33,6 +34,7 @@ pub struct Config {
     pub mail_from: String,
     pub verify_email: String,
     pub secure_cookie: bool,
+    pub google: Option<calendar::GoogleApp>,
 }
 
 pub struct App {
@@ -55,7 +57,7 @@ impl App {
 
 pub type St = axum::extract::State<Arc<App>>;
 
-const SCHEMA: &str = "
+pub const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL, pass TEXT NOT NULL,
   approved INTEGER NOT NULL DEFAULT 0, approve_token TEXT, pin TEXT,
@@ -103,12 +105,24 @@ CREATE TABLE IF NOT EXISTS registrations (
   token TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), ip TEXT NOT NULL, agent TEXT NOT NULL, language TEXT NOT NULL,
   origin TEXT NOT NULL, created INTEGER NOT NULL DEFAULT (unixepoch()));
 CREATE TABLE IF NOT EXISTS blocked_emails (email TEXT PRIMARY KEY, created INTEGER NOT NULL DEFAULT (unixepoch()));
+CREATE TABLE IF NOT EXISTS events (
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), title TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '', location TEXT NOT NULL DEFAULT '',
+  start_at INTEGER NOT NULL, end_at INTEGER NOT NULL, all_day INTEGER NOT NULL DEFAULT 0,
+  color TEXT NOT NULL DEFAULT 'blue', google_id TEXT, google_account TEXT, google_link TEXT,
+  created INTEGER NOT NULL DEFAULT (unixepoch()), updated INTEGER NOT NULL DEFAULT (unixepoch()));
+CREATE TABLE IF NOT EXISTS google_links (
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL UNIQUE REFERENCES users(id), email TEXT NOT NULL,
+  refresh_token TEXT NOT NULL, access_token TEXT, access_expires INTEGER NOT NULL DEFAULT 0, synced INTEGER,
+  created INTEGER NOT NULL DEFAULT (unixepoch()));
 CREATE INDEX IF NOT EXISTS notes_user ON notes(user_id);
 CREATE INDEX IF NOT EXISTS files_user ON files(user_id, folder_id);
 CREATE INDEX IF NOT EXISTS folders_parent ON folders(parent_id);
 CREATE INDEX IF NOT EXISTS reminders_due ON reminders(sent, remind_at);
 CREATE INDEX IF NOT EXISTS tasks_project ON tasks(project_id, column_id, position);
 CREATE INDEX IF NOT EXISTS subtasks_task ON subtasks(task_id, position);
+CREATE INDEX IF NOT EXISTS events_user ON events(user_id, start_at);
+CREATE UNIQUE INDEX IF NOT EXISTS events_google ON events(user_id, google_id);
 ";
 
 fn env(key: &str) -> Option<String> {
@@ -185,6 +199,14 @@ fn api() -> Router<Arc<App>> {
         .route("/api/tasks/{id}/subtasks", get(board::subtasks).post(board::create_subtask))
         .route("/api/subtasks/{id}", put(board::update_subtask).delete(board::remove_subtask))
         .route("/api/dashboard", get(dashboard::get))
+        .route("/api/calendar", get(calendar::get))
+        .route("/api/calendar/sync", post(calendar::sync))
+        .route("/api/events", post(calendar::create))
+        .route("/api/events/{id}", put(calendar::update).delete(calendar::remove))
+        .route("/api/events/{id}/google", post(calendar::push))
+        .route("/api/google", delete(calendar::disconnect))
+        .route("/api/google/connect", get(calendar::connect))
+        .route("/api/google/callback", get(calendar::callback))
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -200,6 +222,9 @@ async fn main() {
         resend_key: env("RESEND_API_KEY"),
         mail_from: env("MAIL_FROM").expect("MAIL_FROM is required"),
         verify_email: env("VERIFY_EMAIL").expect("VERIFY_EMAIL is required"),
+        google: env("GOOGLE_CLIENT_ID")
+            .zip(env("GOOGLE_CLIENT_SECRET"))
+            .map(|(client_id, client_secret)| calendar::GoogleApp { client_id, client_secret }),
         data_dir,
     };
 

@@ -259,9 +259,9 @@ fn ProjectCard(project: ProjectItem, reload: Callback<()>) -> impl IntoView {
 pub fn ProjectDetail() -> impl IntoView {
     let ui = use_ui();
     let params = use_params_map();
-    let id = move || params.read().get("id").unwrap_or_default();
+    let id = Memo::new(move |_| params.read().get("id").unwrap_or_default());
     let project = LocalResource::new(move || {
-        let path = format!("/api/projects/{}", id());
+        let path = format!("/api/projects/{}", id.get());
         async move { ui.run(api::get::<ProjectItem>(&path)).await }
     });
     view! { {move || project.get().flatten().map(|p| view! { <ProjectView project=p /> })} }
