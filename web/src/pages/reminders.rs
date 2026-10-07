@@ -84,7 +84,7 @@ pub fn ReminderList(#[prop(optional)] reload: Option<RwSignal<u32>>, #[prop(opti
 
     view! {
         <Toolbar>
-            <div class="flex flex-wrap flex-1 gap-2 items-center min-w-0 max-w-full">
+            <div class="flex flex-wrap flex-1 gap-2 items-center min-w-0 max-w-full basis-full sm:basis-0">
                 <SearchBox value=q placeholder="Search reminders  /" />
                 <Show when=move || !archive_only>
                     <Segmented options=SHOW value=show on_change=set_show />
@@ -144,7 +144,7 @@ fn ReminderRow(reminder: Reminder, reload: Callback<()>) -> impl IntoView {
             <div class="flex justify-center items-center rounded-lg size-9 bg-muted shrink-0">
                 <Bell class="size-4 text-muted-foreground" />
             </div>
-            <div class="flex flex-col flex-1 min-w-0">
+            <div class="flex flex-col flex-1 min-w-48">
                 <span class="font-medium truncate" class=("line-through", !pending) class=("text-muted-foreground", !pending)>{reminder.title}</span>
                 <span class="text-xs text-muted-foreground">{fmt_time(reminder.remind_at)}</span>
             </div>
@@ -155,7 +155,7 @@ fn ReminderRow(reminder: Reminder, reload: Callback<()>) -> impl IntoView {
                 </Button>
             })}
             {badge}
-            <div class="flex gap-0.5 items-center opacity-70 transition-opacity group-hover:opacity-100">
+            <div class="flex gap-0.5 items-center ml-auto opacity-70 transition-opacity group-hover:opacity-100 pointer-coarse:opacity-100">
                 <Show when=move || pending && !archived>
                     <Button variant=ButtonVariant::Ghost size=ButtonSize::IconSm attr:title="Mark as done" on:click=move |_| act("done")>
                         <Check />

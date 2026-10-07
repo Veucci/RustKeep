@@ -315,7 +315,7 @@ fn Layout() -> impl IntoView {
                     <NavBody />
                 </aside>
             </Show>
-            <div class="flex flex-col flex-1 min-w-0 bg-background">
+            <div class="flex overflow-x-clip flex-col flex-1 min-w-0 bg-background">
                 <header class="flex sticky top-0 z-20 gap-2 items-center px-4 h-14 border-b backdrop-blur bg-background/80">
                     <div class="hidden md:flex">
                         <SidenavTrigger>

@@ -60,12 +60,12 @@ fn StatCard(
 ) -> impl IntoView {
     view! {
         <A href=api::url(href) attr:class="block group">
-            <Card class="gap-2 h-full lift">
-                <CardHeader class="flex flex-row justify-between items-center sm:flex">
+            <Card class="gap-2 py-4 h-full sm:py-6 lift">
+                <CardHeader class="flex flex-row justify-between items-center px-4 sm:flex sm:px-6">
                     <CardDescription class="font-medium text-foreground">{title}</CardDescription>
                     <div class="text-muted-foreground [&_svg]:size-4 group-hover:text-foreground">{children()}</div>
                 </CardHeader>
-                <CardContent class="flex flex-col gap-1">
+                <CardContent class="flex flex-col gap-1 px-4 sm:px-6">
                     <span class="text-3xl font-semibold tracking-tight tabular-nums">{value}</span>
                     <span class="text-xs" class=("text-destructive", alert) class=("text-muted-foreground", !alert)>{hint}</span>
                 </CardContent>
@@ -267,13 +267,13 @@ pub fn Dashboard() -> impl IntoView {
                     "New note"
                 </Button>
             </PageHeader>
-            <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <div class="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
                 {move || match data() {
                     Some(s) => stats_view(s.stats, &s.projects).into_any(),
                     None => (0..4).map(|_| view! { <Skeleton class="h-32 rounded-xl" /> }).collect_view().into_any(),
                 }}
             </div>
-            <div class="grid gap-4 lg:grid-cols-7">
+            <div class="grid grid-cols-1 gap-4 lg:grid-cols-7">
                 <div class="lg:col-span-4">
                     <Panel title="Upcoming tasks" description="Overdue and due within 14 days, across all boards" href="/projects">
                         {move || data().map_or_else(|| loading(4), |s| tasks_view(s.tasks))}
@@ -285,7 +285,7 @@ pub fn Dashboard() -> impl IntoView {
                     </Panel>
                 </div>
             </div>
-            <div class="grid gap-4 lg:grid-cols-3">
+            <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
                 <Panel title="Notes" description="Pinned and recently edited" href="/notes">
                     {move || data().map_or_else(|| loading(4), |s| notes_view(s.notes))}
                 </Panel>

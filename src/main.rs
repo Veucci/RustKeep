@@ -3,6 +3,7 @@
 mod auth;
 mod board;
 mod dashboard;
+mod export;
 mod files;
 mod folders;
 mod migrate;
@@ -152,6 +153,7 @@ fn api() -> Router<Arc<App>> {
         .route("/api/notes", get(notes::list).post(notes::create))
         .route("/api/notes/{id}", get(notes::get).put(notes::update).delete(notes::remove))
         .route("/api/notes/{id}/action/{action}", post(notes::action))
+        .route("/api/notes/{id}/export/{format}", get(notes::export))
         .route("/api/notes/{id}/share", post(notes::share).delete(notes::unshare))
         .route("/api/public/notes/{token}", get(notes::public_get).put(notes::public_update))
         .route("/api/files", get(files::list).post(files::upload).layer(DefaultBodyLimit::disable()))

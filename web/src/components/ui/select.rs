@@ -163,7 +163,7 @@ pub fn SelectContent(
     let ctx = expect_context::<SelectContext>();
 
     let merged_class = tw_merge!(
-        "w-[150px] overflow-auto z-50 p-1 rounded-md border bg-card shadow-md h-fit max-h-[300px] absolute top-[calc(100%+4px)] left-0 data-[position=Above]:top-auto data-[position=Above]:bottom-[calc(100%+4px)] transition-all duration-200 data-[state=closed]:opacity-0 data-[state=closed]:scale-95 data-[state=open]:opacity-100 data-[state=open]:scale-100 data-[state=closed]:data-[position=Below]:origin-top data-[state=open]:data-[position=Below]:origin-top data-[state=closed]:data-[position=Above]:origin-bottom data-[state=open]:data-[position=Above]:origin-bottom [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+        "w-[150px] max-w-[calc(100vw-2rem)] overflow-auto z-50 p-1 rounded-md border bg-card shadow-md h-fit max-h-[300px] absolute top-[calc(100%+4px)] left-0 data-[align=end]:left-auto data-[align=end]:right-0 data-[position=Above]:top-auto data-[position=Above]:bottom-[calc(100%+4px)] transition-all duration-200 data-[state=closed]:opacity-0 data-[state=closed]:scale-95 data-[state=open]:opacity-100 data-[state=open]:scale-100 data-[state=closed]:data-[position=Below]:origin-top data-[state=open]:data-[position=Below]:origin-top data-[state=closed]:data-[position=Above]:origin-bottom data-[state=open]:data-[position=Above]:origin-bottom [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
         class
     );
 
@@ -242,6 +242,10 @@ pub fn SelectContent(
                             }}
 
                             select.style.minWidth = `${{triggerRect.width}}px`;
+                            select.removeAttribute('data-align');
+                            if (select.getBoundingClientRect().right > window.innerWidth - 8) {{
+                                select.setAttribute('data-align', 'end');
+                            }}
                         }};
 
                         const openSelect = () => {{

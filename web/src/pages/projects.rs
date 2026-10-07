@@ -181,7 +181,7 @@ pub fn ProjectList(#[prop(optional)] archive_only: bool) -> impl IntoView {
 
     view! {
         <Toolbar>
-            <div class="flex flex-wrap flex-1 gap-2 items-center min-w-0 max-w-full">
+            <div class="flex flex-wrap flex-1 gap-2 items-center min-w-0 max-w-full basis-full sm:basis-0">
                 <SearchBox value=q placeholder="Search projects  /" />
                 <Show when=move || !archive_only>
                     <Segmented options=SHOW value=show on_change=set_show />
@@ -189,7 +189,7 @@ pub fn ProjectList(#[prop(optional)] archive_only: bool) -> impl IntoView {
             </div>
             <SortSelect options=SORTS value=sort on_change=set_sort />
         </Toolbar>
-        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {move || match rows() {
                 None => (0..3).map(|_| view! { <Skeleton class="h-40 rounded-xl" /> }).collect_view().into_any(),
                 Some(items) if items.is_empty() => view! {
@@ -232,7 +232,7 @@ fn ProjectCard(project: ProjectItem, reload: Callback<()>) -> impl IntoView {
                         <Button
                             variant=ButtonVariant::Ghost
                             size=ButtonSize::IconXs
-                            class="opacity-0 transition-opacity group-hover:opacity-100"
+                            class="opacity-0 transition-opacity group-hover:opacity-100 pointer-coarse:opacity-100"
                             attr:title=if archived { "Unarchive" } else { "Archive" }
                             on:click=toggle
                         >
@@ -338,12 +338,13 @@ fn ProjectView(project: ProjectItem) -> impl IntoView {
                         save();
                     })
                 />
-                <Button variant=ButtonVariant::Outline attr:download="" href=api::url(&format!("/api/projects/{id}/export"))>
+                <Button variant=ButtonVariant::Outline attr:title="Export Excel" attr:download="" href=api::url(&format!("/api/projects/{id}/export"))>
                     <Download />
-                    "Export Excel"
+                    <span class="hidden sm:inline">"Export Excel"</span>
                 </Button>
-                <Button variant=ButtonVariant::Outline on:click=toggle_archive>
-                    {move || if archived.get() { view! { <ArchiveRestore /> "Unarchive" }.into_any() } else { view! { <Archive /> "Archive" }.into_any() }}
+                <Button variant=ButtonVariant::Outline attr:title=move || if archived.get() { "Unarchive" } else { "Archive" } on:click=toggle_archive>
+                    {move || if archived.get() { view! { <ArchiveRestore /> }.into_any() } else { view! { <Archive /> }.into_any() }}
+                    <span class="hidden sm:inline">{move || if archived.get() { "Unarchive" } else { "Archive" }}</span>
                 </Button>
                 <Button variant=ButtonVariant::Ghost size=ButtonSize::Icon attr:title="Delete project" on:click=remove>
                     <Trash2 />
@@ -536,13 +537,13 @@ fn Board(project: Id) -> impl IntoView {
 
     view! {
         <Toolbar>
-            <div class="flex flex-wrap flex-1 gap-2 items-center min-w-0 max-w-full">
+            <div class="flex flex-wrap flex-1 gap-2 items-center min-w-0 max-w-full basis-full sm:basis-0">
                 <SearchBox value=filters.q placeholder="Search tasks  /" />
                 <Segmented options=DUE value=due on_change=set_due />
             </div>
             <SortSelect options=ORDER value=order on_change=set_order />
         </Toolbar>
-        <div class="flex overflow-x-auto gap-4 items-start px-1 pb-4 -mx-1 page-enter">
+        <div class="flex overflow-x-auto gap-4 items-start px-1 pb-4 -mx-1 page-enter snap-x snap-mandatory sm:snap-none">
             {move || {
                 columns.get().unwrap_or_default().into_iter().map(|c| view! { <BoardColumn column=c ctx filters /> }).collect_view()
             }}
@@ -591,7 +592,7 @@ fn ColumnHeader(column: Column, count: Signal<usize>, ctx: BoardCtx) -> impl Int
                     <Input class="h-8 bg-background" bind_value=name autofocus=true />
                 </form>
             </Show>
-            <div class="flex opacity-0 transition-opacity group-hover/col:opacity-100">
+            <div class="flex opacity-0 transition-opacity group-hover/col:opacity-100 pointer-coarse:opacity-100">
                 <Button variant=ButtonVariant::Ghost size=ButtonSize::IconXs attr:title="Move left" on:click=move |_| shift("left")>
                     <ChevronLeft />
                 </Button>
@@ -638,7 +639,7 @@ fn BoardColumn(column: Column, ctx: BoardCtx, filters: Filters) -> impl IntoView
 
     view! {
         <div
-            class="flex flex-col gap-2 p-2 w-72 rounded-xl border transition-all duration-200 shrink-0 bg-muted/40 max-h-[calc(100dvh-10rem)]"
+            class="flex flex-col gap-2 p-2 w-72 rounded-xl border transition-all duration-200 shrink-0 snap-start scroll-ml-1 bg-muted/40 max-h-[calc(100dvh-10rem)]"
             class=("ring-2", over)
             class=("ring-primary/30", over)
             class=("bg-muted", over)
@@ -806,7 +807,7 @@ fn TaskModal(ctx: BoardCtx) -> impl IntoView {
 
     view! {
         <Modal open=form.open title="Edit task" class="max-w-[min(72rem,calc(100%-2rem))]">
-            <div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_17rem]">
+            <div class="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_17rem]">
                 <div class="flex flex-col gap-4 min-w-0">
                     <RichEditor title=form.title body=form.description on_change=Callback::new(|_| ()) upload_project allow_upload=true compact=true min_height="min-h-72" />
                     <Subtasks ctx />
@@ -980,7 +981,7 @@ fn SubtaskRow(subtask: Subtask, ctx: BoardCtx, list: LocalResource<Vec<Subtask>>
                 <Button
                     variant=ButtonVariant::Ghost
                     size=ButtonSize::IconXs
-                    class="opacity-0 group-hover/sub:opacity-100 focus-visible:opacity-100"
+                    class="opacity-0 group-hover/sub:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100"
                     attr:title="Delete subtask"
                     on:click=remove
                 >
@@ -998,7 +999,7 @@ fn SubtaskRow(subtask: Subtask, ctx: BoardCtx, list: LocalResource<Vec<Subtask>>
                         min_height="min-h-28"
                         placeholder="Add details..."
                     />
-                    <div class="grid gap-3 sm:grid-cols-2">
+                    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                         <div class="flex flex-col gap-2">
                             <Label>"Due date"</Label>
                             <DatePicker bind_value=due />

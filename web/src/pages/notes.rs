@@ -158,7 +158,7 @@ fn NotesInner(view: View, embedded: bool) -> impl IntoView {
                 <Segmented options=VIEWS value=Signal::derive(move || view.key().to_owned()) on_change=switch />
             </Show>
             <Toolbar>
-                <div class="flex flex-wrap flex-1 gap-2 items-center min-w-0 max-w-full">
+                <div class="flex flex-wrap flex-1 gap-2 items-center min-w-0 max-w-full basis-full sm:basis-0">
                     <SearchBox value=q placeholder="Search notes  /" />
                     <Show when=move || view != View::Trash>
                         <Segmented options=SHOW value=show on_change=set_show />
@@ -256,7 +256,7 @@ fn NoteRow(note: NoteItem, view: View, reload: Callback<()>) -> impl IntoView {
             <Show when=move || archived && view != View::Archived>
                 <Badge variant=BadgeVariant::Secondary>"Archived"</Badge>
             </Show>
-            <div class="flex gap-0.5 items-center opacity-70 transition-opacity group-hover:opacity-100">
+            <div class="flex gap-0.5 items-center opacity-70 transition-opacity group-hover:opacity-100 pointer-coarse:opacity-100">
                 <Show when=move || live>
                     <RowButton title=if pinned { "Unpin" } else { "Pin to top" } on_click=act(if pinned { "unpin" } else { "pin" })>
                         {if pinned { view! { <PinOff /> }.into_any() } else { view! { <Pin /> }.into_any() }}
@@ -272,13 +272,13 @@ fn NoteRow(note: NoteItem, view: View, reload: Callback<()>) -> impl IntoView {
                     <RowButton title="Move to trash" on_click=act("trash")><Trash2 /></RowButton>
                 </Show>
                 <Show when=move || view == View::Trash>
-                    <Button variant=ButtonVariant::Ghost size=ButtonSize::Sm on:click=move |_| act("restore").run(())>
+                    <Button variant=ButtonVariant::Ghost size=ButtonSize::Sm attr:title="Restore" on:click=move |_| act("restore").run(())>
                         <ArchiveRestore />
-                        "Restore"
+                        <span class="hidden sm:inline">"Restore"</span>
                     </Button>
-                    <Button variant=ButtonVariant::Ghost size=ButtonSize::Sm on:click=move |_| purge.run(())>
+                    <Button variant=ButtonVariant::Ghost size=ButtonSize::Sm attr:title="Delete permanently" on:click=move |_| purge.run(())>
                         <Trash2 />
-                        "Delete"
+                        <span class="hidden sm:inline">"Delete"</span>
                     </Button>
                 </Show>
             </div>

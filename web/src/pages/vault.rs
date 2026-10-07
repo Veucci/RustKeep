@@ -72,7 +72,7 @@ fn VaultInner() -> impl IntoView {
                     <CardTitle>"Store a secret"</CardTitle>
                 </CardHeader>
                 <CardContent>
-                    <form class="grid gap-3 sm:grid-cols-3" on:submit=submit>
+                    <form class="grid grid-cols-1 gap-3 sm:grid-cols-3" on:submit=submit>
                         <div class="flex flex-col gap-2">
                             <Label>"Name"</Label>
                             <Input bind_value=name placeholder="OpenAI API key" required=true />

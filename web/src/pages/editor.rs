@@ -1,5 +1,5 @@
 use icons::{
-    Archive, ArchiveRestore, ArrowLeft, Bell, Bold, Code, ExternalLink, Heading1, Heading2, ImagePlus, Italic, Link, List,
+    Archive, ArchiveRestore, ArrowLeft, Bell, Bold, Code, Download, ExternalLink, FileText, Heading1, Heading2, ImagePlus, Italic, Link, List,
     ListChecks, ListOrdered, Pin, PinOff, Quote, Share2, Strikethrough, Trash2, X,
 };
 use leptos::ev::{ClipboardEvent, DragEvent, MouseEvent, SubmitEvent};
@@ -104,6 +104,7 @@ fn EditorBody(note: Note) -> impl IntoView {
     Effect::new(move |_| ui.set_crumb(title.get()));
     let share_open = RwSignal::new(false);
     let remind_open = RwSignal::new(false);
+    let export_open = RwSignal::new(false);
     let saver = AutoSave::new();
     let save = Callback::new(move |_| {
         let payload = json!({
@@ -181,26 +182,47 @@ fn EditorBody(note: Note) -> impl IntoView {
                     <Button variant=ButtonVariant::Outline size=ButtonSize::Sm attr:title=move || if pinned.get() { "Unpin" } else { "Pin to top" } on:click=toggle_pin>
                         {move || if pinned.get() { view! { <PinOff /> }.into_any() } else { view! { <Pin /> }.into_any() }}
                     </Button>
-                    <Button variant=ButtonVariant::Outline size=ButtonSize::Sm on:click=move |_| share_open.set(true)>
+                    <Button variant=ButtonVariant::Outline size=ButtonSize::Sm attr:title="Share" on:click=move |_| share_open.set(true)>
                         <Share2 />
-                        "Share"
+                        <span class="hidden sm:inline">"Share"</span>
                     </Button>
-                    <Button variant=ButtonVariant::Outline size=ButtonSize::Sm on:click=toggle_archive>
-                        {move || if archived.get() { view! { <ArchiveRestore /> "Unarchive" }.into_any() } else { view! { <Archive /> "Archive" }.into_any() }}
+                    <Button variant=ButtonVariant::Outline size=ButtonSize::Sm attr:title=move || if archived.get() { "Unarchive" } else { "Archive" } on:click=toggle_archive>
+                        {move || if archived.get() { view! { <ArchiveRestore /> }.into_any() } else { view! { <Archive /> }.into_any() }}
+                        <span class="hidden sm:inline">{move || if archived.get() { "Unarchive" } else { "Archive" }}</span>
                     </Button>
                 </Show>
-                <Button variant=ButtonVariant::Outline size=ButtonSize::Sm on:click=move |_| remind_open.set(true)>
-                    <Bell />
-                    "Remind"
+                <Button variant=ButtonVariant::Outline size=ButtonSize::Sm attr:title="Export" on:click=move |_| export_open.set(true)>
+                    <Download />
+                    <span class="hidden sm:inline">"Export"</span>
                 </Button>
-                <Button variant=ButtonVariant::Outline size=ButtonSize::Sm on:click=trash>
+                <Button variant=ButtonVariant::Outline size=ButtonSize::Sm attr:title="Remind" on:click=move |_| remind_open.set(true)>
+                    <Bell />
+                    <span class="hidden sm:inline">"Remind"</span>
+                </Button>
+                <Button variant=ButtonVariant::Outline size=ButtonSize::Sm attr:title=if secret { "Delete" } else { "Trash" } on:click=trash>
                     <Trash2 />
-                    {if secret { "Delete" } else { "Trash" }}
+                    <span class="hidden sm:inline">{if secret { "Delete" } else { "Trash" }}</span>
                 </Button>
             </div>
             <RichEditor title body on_change=save upload_project=project allow_upload=!secret />
         </div>
         <ShareDialog open=share_open api_path=format!("/api/notes/{}/share", id.get_value()) link_prefix="/s/" token=share_token />
+        <Modal open=export_open title="Export note">
+            <p class="text-sm text-muted-foreground">"Download the latest saved version of this note."</p>
+            <div class="grid grid-cols-2 gap-2">
+                {["docx", "pdf"].map(|format| view! {
+                    <Button
+                        variant=ButtonVariant::Outline
+                        attr:download=""
+                        href=api::url(&format!("/api/notes/{}/export/{format}", id.get_value()))
+                        on:click=move |_| export_open.set(false)
+                    >
+                        <FileText />
+                        {if format == "pdf" { "PDF" } else { "Word (.docx)" }}
+                    </Button>
+                })}
+            </div>
+        </Modal>
         <Modal open=remind_open title="Add reminder">
             <ReminderForm note_id=Some(id.get_value()) title=if secret { String::new() } else { title.get_untracked() } on_done=Callback::new(move |_| remind_open.set(false)) />
         </Modal>

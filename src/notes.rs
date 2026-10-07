@@ -1,9 +1,13 @@
 use axum::Json;
+use axum::http::header;
+use axum::response::IntoResponse;
 use axum::extract::{Path, Query};
 use libsql::params;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::export;
+use crate::files::attachment;
 use crate::{App, St};
 use crate::auth::User;
 use crate::util::{Res, all, bad, exec, one, token, uuid};
@@ -82,20 +86,36 @@ pub struct Note {
     pinned: i64,
 }
 
-pub async fn get(app: St, user: User, Path(id): Path<String>) -> Res<Json<Note>> {
+async fn load(app: &App, user: &User, id: &str) -> Res<Note> {
     let mut n: Note = one(
         &app.db,
         "SELECT id, title, body, project_id, secret, archived, trashed_at, updated, share_token, share_expires, pinned \
          FROM notes WHERE id = ?1 AND user_id = ?2",
-        params![id.as_str(), user.id.as_str()],
+        params![id, user.id.as_str()],
     )
     .await?;
     if n.secret == 1 {
         user.need_pin()?;
-        n.title = open_title(&app, n.title);
+        n.title = open_title(app, n.title);
         n.body = app.crypto.open(&n.body)?;
     }
-    Ok(Json(n))
+    Ok(n)
+}
+
+pub async fn get(app: St, user: User, Path(id): Path<String>) -> Res<Json<Note>> {
+    Ok(Json(load(&app, &user, &id).await?))
+}
+
+pub async fn export(app: St, user: User, Path((id, format)): Path<(String, String)>) -> Res<impl IntoResponse> {
+    let n = load(&app, &user, &id).await?;
+    let title = if n.title.trim().is_empty() { "Untitled" } else { n.title.trim() };
+    let (mime, bytes) = match format.as_str() {
+        "docx" => ("application/vnd.openxmlformats-officedocument.wordprocessingml.document", export::docx(title, &n.body)?),
+        "pdf" => ("application/pdf", export::pdf(title, &n.body)?),
+        _ => return Err(bad("Invalid format")),
+    };
+    let disposition = attachment(&format!("{title}.{format}"));
+    Ok(([(header::CONTENT_TYPE, mime.to_owned()), (header::CONTENT_DISPOSITION, disposition)], bytes))
 }
 
 #[derive(Deserialize)]

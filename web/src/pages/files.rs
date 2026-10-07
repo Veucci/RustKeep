@@ -669,7 +669,7 @@ fn ListView(dirs: Vec<Folder>, docs: Vec<FileItem>) -> impl IntoView {
     };
     view! {
         <Card class="overflow-hidden gap-0 py-0">
-            <div class="grid items-center gap-3 px-3 h-10 text-xs font-medium border-b grid-cols-[1.25rem_1fr_2rem] sm:grid-cols-[1.25rem_1fr_9rem_6rem_2rem] bg-muted/50 text-muted-foreground">
+            <div class="grid items-center gap-3 px-3 h-10 text-xs font-medium border-b grid-cols-[1.25rem_minmax(0,1fr)_2rem] sm:grid-cols-[1.25rem_minmax(0,1fr)_9rem_6rem_2rem] bg-muted/50 text-muted-foreground">
                 <Checkbox aria_label="Select all" checked=Signal::derive(all) on_checked_change=Callback::new(toggle_all) />
                 <span>"Name"</span>
                 <span class="hidden sm:block">"Created"</span>
@@ -799,7 +799,7 @@ fn Item(entry: Entry, grid: bool) -> impl IntoView {
     let base = if grid {
         "flex overflow-hidden relative flex-col rounded-xl border transition-all cursor-pointer select-none group bg-card hover:shadow-md"
     } else {
-        "grid items-center gap-3 px-3 py-1.5 border-b last:border-b-0 transition-colors cursor-pointer select-none group grid-cols-[1.25rem_1fr_2rem] sm:grid-cols-[1.25rem_1fr_9rem_6rem_2rem] hover:bg-muted/50"
+        "grid items-center gap-3 px-3 py-1.5 border-b last:border-b-0 transition-colors cursor-pointer select-none group grid-cols-[1.25rem_minmax(0,1fr)_2rem] sm:grid-cols-[1.25rem_minmax(0,1fr)_9rem_6rem_2rem] hover:bg-muted/50"
     };
     let body = if grid {
         view! {
@@ -812,7 +812,7 @@ fn Item(entry: Entry, grid: bool) -> impl IntoView {
                 {badges(&entry)}
                 {more}
             </div>
-            <div class="absolute top-2 left-2 sm:opacity-0 sm:group-hover:opacity-100" class=("sm:opacity-100", picked)>{check}</div>
+            <div class="absolute top-2 left-2 sm:opacity-0 sm:group-hover:opacity-100 sm:pointer-coarse:opacity-100" class=("sm:opacity-100", picked)>{check}</div>
         }
         .into_any()
     } else {

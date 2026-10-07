@@ -166,7 +166,7 @@ pub fn due_label(days: i64) -> String {
 #[component]
 pub fn Segmented(options: Options, value: Signal<String>, on_change: Callback<String>) -> impl IntoView {
     view! {
-        <div class="inline-flex overflow-x-auto gap-1 items-center p-1 max-w-full rounded-lg w-fit bg-muted">
+        <div class="inline-flex overflow-x-auto gap-1 items-center p-1 max-w-full rounded-lg w-fit bg-muted [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {options
                 .iter()
                 .map(|(key, label)| {
@@ -279,7 +279,7 @@ pub fn Modal(
     let title = StoredValue::new(title);
     let children = StoredValue::new(children);
     view! {
-        <ControlledDialog open on_close=Callback::new(move |()| open.set(false)) class=format!("max-w-md {class}")>
+        <ControlledDialog open on_close=Callback::new(move |()| open.set(false)) class=format!("max-w-[min(28rem,calc(100%-2rem))] {class}")>
             <DialogBody>
                 <DialogTitle class="pr-6">{title.get_value()}</DialogTitle>
                 {children.with_value(|children| children())}
@@ -301,7 +301,7 @@ pub fn ConfirmDialog() -> impl IntoView {
         }
     };
     view! {
-        <ControlledAlertDialog open on_close=close class="max-w-md">
+        <ControlledAlertDialog open on_close=close class="max-w-[min(28rem,calc(100%-2rem))]">
             <AlertDialogBody>
                 <AlertDialogHeader>
                     <AlertDialogTitle>"Are you sure?"</AlertDialogTitle>
@@ -408,6 +408,11 @@ pub fn PinGate(children: ChildrenFn) -> impl IntoView {
     }
 }
 
+fn qr_svg(link: &str) -> String {
+    let Ok(code) = qrcode::QrCode::new(link) else { return String::new() };
+    code.render::<qrcode::render::svg::Color>().quiet_zone(false).build()
+}
+
 #[component]
 pub fn ShareDialog(
     open: RwSignal<bool>,
@@ -443,6 +448,7 @@ pub fn ShareDialog(
                     let copy_link = link.clone();
                     view! {
                         <p class="text-sm text-muted-foreground">"Anyone with this link can access it."</p>
+                        <div class="self-center p-3 bg-white rounded-lg border size-48 [&_svg]:size-full" inner_html=qr_svg(&link) />
                         <Input readonly=true bind_value=RwSignal::new(link) />
                         <div class="flex gap-2 justify-end">
                             <Button variant=ButtonVariant::Destructive on:click=remove>"Stop sharing"</Button>

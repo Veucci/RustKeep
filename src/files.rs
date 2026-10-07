@@ -120,6 +120,14 @@ pub struct Stored {
 }
 
 fn disposition(name: &str) -> String {
+    format!("inline; {}", filename(name))
+}
+
+pub fn attachment(name: &str) -> String {
+    format!("attachment; {}", filename(name))
+}
+
+fn filename(name: &str) -> String {
     let enc: String = name
         .bytes()
         .map(|b| match b {
@@ -127,7 +135,7 @@ fn disposition(name: &str) -> String {
             _ => format!("%{b:02X}"),
         })
         .collect();
-    format!("inline; filename*=UTF-8''{enc}")
+    format!("filename*=UTF-8''{enc}")
 }
 
 fn inert(mime: &str) -> bool {
