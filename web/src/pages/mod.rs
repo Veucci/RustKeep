@@ -1,5 +1,6 @@
 pub mod archive;
 pub mod auth;
+pub mod calendar;
 pub mod dashboard;
 pub mod editor;
 pub mod drive;

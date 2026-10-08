@@ -37,6 +37,7 @@ pub struct Me {
 #[derive(Clone)]
 pub struct ConfirmRequest {
     message: String,
+    label: &'static str,
     action: Rc<dyn Fn()>,
 }
 
@@ -50,7 +51,11 @@ pub struct Ui {
 
 impl Ui {
     pub fn confirm_delete(&self, message: impl Into<String>, action: impl Fn() + 'static) {
-        self.confirm.set(Some(ConfirmRequest { message: message.into(), action: Rc::new(action) }));
+        self.confirm(message, "Delete", action);
+    }
+
+    pub fn confirm(&self, message: impl Into<String>, label: &'static str, action: impl Fn() + 'static) {
+        self.confirm.set(Some(ConfirmRequest { message: message.into(), label, action: Rc::new(action) }));
     }
 
     pub fn notify(&self, msg: impl Into<String>) {
@@ -294,6 +299,7 @@ pub fn ConfirmDialog() -> impl IntoView {
     let open = Signal::derive(move || ui.confirm.with(Option::is_some));
     let close = Callback::new(move |()| ui.confirm.set(None));
     let message = move || ui.confirm.with(|request| request.as_ref().map(|r| r.message.clone()).unwrap_or_default());
+    let label = move || ui.confirm.with(|request| request.as_ref().map_or("Delete", |r| r.label));
     let accept = move |_| {
         if let Some(request) = ui.confirm.get_untracked() {
             ui.confirm.set(None);
@@ -309,7 +315,7 @@ pub fn ConfirmDialog() -> impl IntoView {
                 </AlertDialogHeader>
                 <AlertDialogFooter>
                     <Button variant=ButtonVariant::Outline on:click=move |_| close.run(())>"Cancel"</Button>
-                    <Button variant=ButtonVariant::Destructive on:click=accept>"Delete"</Button>
+                    <Button variant=ButtonVariant::Destructive on:click=accept>{label}</Button>
                 </AlertDialogFooter>
             </AlertDialogBody>
         </ControlledAlertDialog>

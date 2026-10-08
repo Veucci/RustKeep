@@ -99,7 +99,7 @@ fn display_date(date: Date) -> String {
     date.format(DISPLAY_DATE).unwrap_or_default()
 }
 
-fn shift_month(date: Date, forward: bool) -> Date {
+pub fn shift_month(date: Date, forward: bool) -> Date {
     let (year, month) = match (forward, date.month()) {
         (true, Month::December) => (date.year() + 1, Month::January),
         (false, Month::January) => (date.year() - 1, Month::December),

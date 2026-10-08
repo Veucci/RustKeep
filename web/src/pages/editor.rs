@@ -47,10 +47,10 @@ fn back_target(secret: bool, archived: bool, project: Option<Id>) -> (String, &'
 pub fn NoteEditor() -> impl IntoView {
     let ui = use_ui();
     let params = use_params_map();
-    let id = move || params.read().get("id").unwrap_or_default();
+    let id = Memo::new(move |_| params.read().get("id").unwrap_or_default());
     let pin_ok = Memo::new(move |_| ui.me.with(|m| m.as_ref().is_some_and(|m| m.pin_ok)));
     let note = LocalResource::new(move || {
-        let path = format!("/api/notes/{}", id());
+        let path = format!("/api/notes/{}", id.get());
         pin_ok.track();
         async move { api::get::<Note>(&path).await }
     });
@@ -301,7 +301,7 @@ fn convert(node: &web_sys::Node) -> Option<md::Node> {
     Some(md::Node::Element(md::Element { tag, attrs, checked, children: read_dom(node) }))
 }
 
-fn parse_html(html: &str) -> Vec<md::Node> {
+pub fn parse_html(html: &str) -> Vec<md::Node> {
     let template = document().create_element("template").ok().and_then(|e| e.dyn_into::<HtmlTemplateElement>().ok());
     let Some(template) = template else { return Vec::new() };
     template.set_inner_html(html);

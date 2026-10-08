@@ -92,6 +92,10 @@ Copy `.env.example` to `.env`. The server loads `.env` from the working director
 | `RESEND_API_KEY` | empty | Resend key; without it emails are printed to stdout |
 | `MAIL_FROM` | `RustKeep <noreply@efeozkan.com.tr>` | Sender address (must be a verified Resend domain) |
 | `VERIFY_EMAIL` | `example@efeozkan.com.tr` | Receives new-user approval requests |
+| `GOOGLE_CLIENT_ID` | empty | OAuth client for Google Calendar sync; leave empty to hide the integration |
+| `GOOGLE_CLIENT_SECRET` | empty | Secret of the same OAuth client |
+
+For Google Calendar, create an OAuth client of type "Web application" in Google Cloud, enable the Google Calendar API and add `PUBLIC_URL` + `BASE_PATH` + `/api/google/callback` as an authorized redirect URI.
 
 Keep `SECRET_KEY` (or `DATA_DIR/secret.key`) safe: losing it makes vault entries and secret notes unreadable.
 

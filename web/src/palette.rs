@@ -19,8 +19,9 @@ struct Item {
 
 const NEW_NOTE: &str = "new-note";
 
-const PAGES: [(&str, &str); 12] = [
+const PAGES: [(&str, &str); 13] = [
     ("Dashboard", "/"),
+    ("Calendar", "/calendar"),
     ("Notes", "/notes"),
     ("Projects", "/projects"),
     ("Files", "/files"),

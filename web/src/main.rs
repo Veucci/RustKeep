@@ -10,7 +10,7 @@ mod palette;
 mod widgets;
 
 use icons::{
-    Archive, ArrowLeft, Bell, Folder, KeyRound, LayoutDashboard, Lock, LogOut, Menu, Notebook, PanelLeft, Search,
+    Archive, ArrowLeft, Bell, CalendarDays, Folder, KeyRound, LayoutDashboard, Lock, LogOut, Menu, Notebook, PanelLeft, Search,
     SquareKanban, Trash2,
 };
 use leptos::ev;
@@ -75,6 +75,7 @@ fn App() -> impl IntoView {
                     <Route path=path!("files") view=pages::files::FilesPage />
                     <Route path=path!("vault") view=pages::vault::Vault />
                     <Route path=path!("reminders") view=pages::reminders::Reminders />
+                    <Route path=path!("calendar") view=pages::calendar::CalendarPage />
                 </ParentRoute>
             </Routes>
             <Toast />
@@ -101,6 +102,7 @@ fn section(path: &str) -> (&'static str, &'static str) {
         "projects" => ("Projects", "/projects"),
         "files" => ("Files", "/files"),
         "reminders" => ("Reminders", "/reminders"),
+        "calendar" => ("Calendar", "/calendar"),
         "vault" => ("Vault", "/vault"),
         "archive" => ("Archive", "/archive"),
         "trash" => ("Trash", "/trash"),
@@ -227,6 +229,7 @@ fn NavBody() -> impl IntoView {
         <SidenavContent>
             <NavGroup label="Overview">
                 <NavItem path="/" label="Dashboard"><LayoutDashboard /></NavItem>
+                <NavItem path="/calendar" label="Calendar"><CalendarDays /></NavItem>
             </NavGroup>
             <NavGroup label="Workspace">
                 <NavItem path="/notes" label="Notes"><Notebook /></NavItem>
@@ -255,8 +258,7 @@ fn Breadcrumb() -> impl IntoView {
     let navigate = use_navigate();
     let current = move || section(&location.pathname.get());
     let crumb = move || {
-        location.pathname.track();
-        let path = window().location().pathname().unwrap_or_default();
+        let path = location.pathname.get();
         ui.crumb.get().filter(|(p, _)| *p == path).map(|(_, text)| text)
     };
     let at_home = move || current().1 == "/";
