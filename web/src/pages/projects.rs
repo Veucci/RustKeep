@@ -1,15 +1,16 @@
 use std::cmp::Reverse;
+use std::collections::HashSet;
 
 use icons::{
     Archive, ArchiveRestore, ArrowLeft, Calendar, ChevronLeft, ChevronRight, Download, Flag, FolderKanban, ListChecks,
-    Pencil, Plus, Trash2,
+    Pencil, Plus, SquareKanban, Trash2,
 };
 use leptos::ev::SubmitEvent;
 use leptos::html;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos_router::components::A;
-use leptos_router::hooks::{use_navigate, use_params_map};
+use leptos_router::hooks::{use_location, use_navigate, use_params_map};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use web_sys::DragEvent;
@@ -24,6 +25,9 @@ use crate::components::ui::date_picker::DatePicker;
 use crate::components::ui::empty::{Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyMediaVariant, EmptyTitle};
 use crate::components::ui::input::Input;
 use crate::components::ui::label::Label;
+use crate::components::ui::multi_select::{
+    MultiSelect, MultiSelectAlign, MultiSelectContent, MultiSelectTrigger, MultiSelectValue,
+};
 use crate::components::ui::progress::Progress;
 use crate::components::ui::skeleton::Skeleton;
 use crate::components::ui::textarea::Textarea;
@@ -45,6 +49,7 @@ const SORTS: Options =
 const TABS: Options = &[("board", "Board"), ("notes", "Notes"), ("files", "Files")];
 const DUE: Options = &[("all", "All tasks"), ("overdue", "Overdue"), ("soon", "Due in 7 days"), ("nodate", "No date")];
 const ORDER: Options = &[("manual", "Manual order"), ("due", "Due date"), ("priority", "Priority"), ("newest", "Newest")];
+const PROJECT_FILTER: Options = &[("only", "Show selected"), ("hide", "Hide selected")];
 const PAGE: usize = 20;
 
 #[derive(Clone, Deserialize)]
@@ -64,6 +69,8 @@ pub struct ProjectItem {
 #[derive(Clone, Deserialize)]
 struct Column {
     id: Id,
+    #[serde(default)]
+    project_id: Id,
     name: String,
 }
 
@@ -71,6 +78,10 @@ struct Column {
 struct Task {
     id: Id,
     column_id: Id,
+    #[serde(default, skip_serializing)]
+    project_id: Id,
+    #[serde(default, skip_serializing)]
+    project: String,
     title: String,
     description: String,
     due: Option<String>,
@@ -127,9 +138,26 @@ fn arrange(mut list: Vec<ProjectItem>, q: &str, show: &str, sort: &str) -> Vec<P
 pub fn Projects() -> impl IntoView {
     view! {
         <div class="flex flex-col gap-6 mx-auto max-w-6xl page-enter">
-            <PageHeader title="Projects" description="Boards, notes and files grouped by project." />
+            <PageHeader title="Projects" description="Boards, notes and files grouped by project.">
+                <Button size=ButtonSize::Lg class="text-base" href=api::url("/projects/overview")>
+                    <SquareKanban class="size-5" />
+                    "Overview"
+                </Button>
+            </PageHeader>
             <NewProject />
             <ProjectList />
+        </div>
+    }
+}
+
+#[component]
+pub fn ProjectsOverview() -> impl IntoView {
+    let ui = use_ui();
+    ui.crumb.set(Some((use_location().pathname.get_untracked(), "Overview".into())));
+    view! {
+        <div class="flex flex-col gap-6 mx-auto max-w-screen-2xl page-enter">
+            <PageHeader title="Overview" description="Tasks from every active project on one board." />
+            <Board />
         </div>
     }
 }
@@ -362,7 +390,7 @@ fn ProjectView(project: ProjectItem) -> impl IntoView {
 
 #[derive(Clone, Copy)]
 struct BoardCtx {
-    project: Id,
+    project: Option<Id>,
     columns: LocalResource<Vec<Column>>,
     tasks: RwSignal<Vec<Task>>,
     source: LocalResource<Option<Vec<Task>>>,
@@ -402,17 +430,40 @@ impl BoardCtx {
         self.over_column.set(None);
     }
 
-    fn drop_at(self, column_id: Id, before: Option<Id>) {
+    fn drop_at(self, lane: &Column, before: Option<Id>) {
         let dragged = self.dragging.get_untracked();
         self.end_drag();
         let Some(id) = dragged.filter(|id| before != Some(*id)) else { return };
+        let Some(task) = self.tasks.get_untracked().into_iter().find(|t| t.id == id) else { return };
+        let Some(column_id) = self.lane_columns(lane).into_iter().find(|c| c.project_id == task.project_id).map(|c| c.id) else {
+            self.ui.notify(format!("{} has no \"{}\" column", task.project, lane.name));
+            return;
+        };
         self.tasks.update(|list| reorder(list, id, column_id, before));
         let body = json!({ "column_id": column_id, "before": before });
         self.call(async move { api::post::<Value>(&format!("/api/tasks/{id}/move"), &body).await }, false);
     }
 
-    fn last_column(self) -> Option<Id> {
-        self.columns.get().unwrap_or_default().last().map(|c| c.id)
+    fn lanes(self) -> Vec<Column> {
+        let mut list = self.columns.get().unwrap_or_default();
+        if self.project.is_none() {
+            let mut seen = HashSet::new();
+            list.retain(|c| seen.insert(c.name.trim().to_lowercase()));
+        }
+        list
+    }
+
+    fn lane_columns(self, lane: &Column) -> Vec<Column> {
+        let merged = |c: &Column| self.project.is_none() && c.name.trim().eq_ignore_ascii_case(lane.name.trim());
+        self.columns.get().unwrap_or_default().into_iter().filter(|c| c.id == lane.id || merged(c)).collect()
+    }
+
+    fn project_columns(self, project: Id) -> Vec<Column> {
+        self.columns.get().unwrap_or_default().into_iter().filter(|c| c.project_id == project).collect()
+    }
+
+    fn is_done(self, project: Id, column: Id) -> bool {
+        self.project_columns(project).last().map(|c| c.id) == Some(column)
     }
 }
 
@@ -420,6 +471,7 @@ impl BoardCtx {
 struct TaskForm {
     open: RwSignal<bool>,
     id: RwSignal<Id>,
+    project: RwSignal<Id>,
     title: RwSignal<String>,
     description: RwSignal<String>,
     column: RwSignal<Id>,
@@ -432,6 +484,7 @@ impl TaskForm {
         Self {
             open: RwSignal::new(false),
             id: RwSignal::new(Id::default()),
+            project: RwSignal::new(Id::default()),
             title: RwSignal::new(String::new()),
             description: RwSignal::new(String::new()),
             column: RwSignal::new(Id::default()),
@@ -442,6 +495,7 @@ impl TaskForm {
 
     fn edit(&self, t: Task) {
         self.id.set(t.id);
+        self.project.set(t.project_id);
         self.title.set(t.title);
         self.description.set(t.description);
         self.column.set(t.column_id);
@@ -467,6 +521,8 @@ impl TaskForm {
 #[derive(Clone, Copy)]
 struct Filters {
     q: RwSignal<String>,
+    projects: RwSignal<HashSet<String>>,
+    project_mode: RwSignal<String>,
     due: Signal<String>,
     order: Signal<String>,
 }
@@ -480,7 +536,9 @@ impl Filters {
             "nodate" => days.is_none(),
             _ => true,
         };
-        due_ok && (has(&t.title, &self.q.get()) || has(&t.description, &self.q.get()))
+        let only = self.project_mode.get() == "only";
+        let project_ok = self.projects.with(|p| p.is_empty() || p.contains(t.project_id.as_str()) == only);
+        due_ok && project_ok && (has(&t.title, &self.q.get()) || has(&t.description, &self.q.get()))
     }
 
     fn apply(&self, mut list: Vec<Task>) -> Vec<Task> {
@@ -496,12 +554,11 @@ impl Filters {
 }
 
 #[component]
-fn Board(project: Id) -> impl IntoView {
+fn Board(#[prop(optional)] project: Option<Id>) -> impl IntoView {
     let ui = use_ui();
-    let columns = LocalResource::new(move || async move {
-        ui.run(api::get::<Vec<Column>>(&format!("/api/projects/{project}/columns"))).await.unwrap_or_default()
-    });
-    let source = LocalResource::new(move || async move { ui.run(api::get::<Vec<Task>>(&format!("/api/projects/{project}/tasks"))).await });
+    let path = move |what: &str| project.map_or(format!("/api/board/{what}"), |p| format!("/api/projects/{p}/{what}"));
+    let columns = LocalResource::new(move || async move { ui.run(api::get::<Vec<Column>>(&path("columns"))).await.unwrap_or_default() });
+    let source = LocalResource::new(move || async move { ui.run(api::get::<Vec<Task>>(&path("tasks"))).await });
     let tasks = RwSignal::new(Vec::new());
     let ctx = BoardCtx {
         project,
@@ -526,13 +583,12 @@ fn Board(project: Id) -> impl IntoView {
     });
     let (due, set_due) = query_state("due", "all");
     let (order, set_order) = query_state("order", "manual");
-    let filters = Filters { q: RwSignal::new(String::new()), due, order };
-    let new_column = RwSignal::new(String::new());
-    let add_column = move |ev: SubmitEvent| {
-        ev.prevent_default();
-        let body = json!({ "name": new_column.get_untracked() });
-        new_column.set(String::new());
-        ctx.call(async move { api::post::<Value>(&format!("/api/projects/{project}/columns"), &body).await }, true);
+    let filters = Filters {
+        q: RwSignal::new(String::new()),
+        projects: RwSignal::new(HashSet::new()),
+        project_mode: RwSignal::new("only".into()),
+        due,
+        order,
     };
 
     view! {
@@ -540,22 +596,126 @@ fn Board(project: Id) -> impl IntoView {
             <div class="flex flex-wrap flex-1 gap-2 items-center min-w-0 max-w-full basis-full sm:basis-0">
                 <SearchBox value=filters.q placeholder="Search tasks  /" />
                 <Segmented options=DUE value=due on_change=set_due />
+                <Show when=move || project.is_none()>
+                    <ProjectFilter filters />
+                </Show>
             </div>
             <SortSelect options=ORDER value=order on_change=set_order />
         </Toolbar>
         <div class="flex overflow-x-auto gap-4 items-start px-1 pb-4 -mx-1 page-enter snap-x snap-mandatory sm:snap-none">
-            {move || {
-                columns.get().unwrap_or_default().into_iter().map(|c| view! { <BoardColumn column=c ctx filters /> }).collect_view()
-            }}
-            <form
-                class="flex flex-col gap-2 p-3 w-72 rounded-xl border border-dashed transition-colors shrink-0 hover:bg-muted/30"
-                on:submit=add_column
-            >
-                <span class="text-sm font-medium text-muted-foreground">"Add column"</span>
-                <Input class="bg-background" placeholder="Column name" bind_value=new_column required=true />
-            </form>
+            {move || ctx.lanes().into_iter().map(|c| view! { <BoardColumn column=c ctx filters /> }).collect_view()}
+            {project.map(|project| view! { <AddColumn project ctx /> })}
         </div>
         <TaskModal ctx />
+    }
+}
+
+#[component]
+fn AddColumn(project: Id, ctx: BoardCtx) -> impl IntoView {
+    let name = RwSignal::new(String::new());
+    let add = move |ev: SubmitEvent| {
+        ev.prevent_default();
+        let body = json!({ "name": name.get_untracked() });
+        name.set(String::new());
+        ctx.call(async move { api::post::<Value>(&format!("/api/projects/{project}/columns"), &body).await }, true);
+    };
+    view! {
+        <form class="flex flex-col gap-2 p-3 w-72 rounded-xl border border-dashed transition-colors shrink-0 hover:bg-muted/30" on:submit=add>
+            <span class="text-sm font-medium text-muted-foreground">"Add column"</span>
+            <Input class="bg-background" placeholder="Column name" bind_value=name required=true />
+        </form>
+    }
+}
+
+#[component]
+fn ProjectFilter(filters: Filters) -> impl IntoView {
+    let ui = use_ui();
+    let projects = LocalResource::new(move || async move {
+        let list = ui.run(api::get::<Vec<ProjectItem>>("/api/projects")).await.unwrap_or_default();
+        let mut list: Vec<_> = list.into_iter().filter(|p| p.archived == 0).map(|p| (p.id.to_string(), p.name)).collect();
+        list.sort_by_key(|(_, name)| name.to_lowercase());
+        list
+    });
+    let q = RwSignal::new(String::new());
+    let visible = move || projects.get().unwrap_or_default().into_iter().filter(|(_, name)| has(name, &q.get())).collect::<Vec<_>>();
+    let all_visible_selected = Signal::derive(move || {
+        let shown = visible();
+        !shown.is_empty() && filters.projects.with(|p| shown.iter().all(|(id, _)| p.contains(id)))
+    });
+    let toggle_visible = move |_| {
+        let select = !all_visible_selected.get_untracked();
+        filters.projects.update(|p| {
+            for (id, _) in visible() {
+                if select { p.insert(id) } else { p.remove(&id) };
+            }
+        });
+    };
+
+    view! {
+        <MultiSelect values=filters.projects align=MultiSelectAlign::Start>
+            <MultiSelectTrigger class="w-48">
+                <MultiSelectValue placeholder="All projects" />
+            </MultiSelectTrigger>
+            <MultiSelectContent class="overflow-visible p-0 w-72 max-h-none">
+                <div class="flex flex-col gap-1 p-2 border-b">
+                    <Input class="h-8" placeholder="Search projects" bind_value=q />
+                    <div class="flex justify-between items-center">
+                        <div class="flex flex-1 gap-2 items-center py-1.5 px-2 text-sm rounded-sm cursor-pointer hover:bg-accent" on:click=toggle_visible>
+                            <Checkbox class="pointer-events-none" checked=all_visible_selected aria_label="Select all" />
+                            "Select all"
+                        </div>
+                        <Button
+                            variant=ButtonVariant::Ghost
+                            size=ButtonSize::Sm
+                            attr:disabled=move || filters.projects.with(HashSet::is_empty)
+                            on:click=move |_| filters.projects.update(HashSet::clear)
+                        >
+                            "Clear"
+                        </Button>
+                    </div>
+                </div>
+                <div class="flex overflow-y-auto flex-col p-1 max-h-72">
+                    <For each=visible key=|(id, _)| id.clone() let((id, name))>
+                        <ProjectOption id name selected=filters.projects />
+                    </For>
+                    <Show when=move || visible().is_empty()>
+                        <p class="py-4 text-sm text-center text-muted-foreground">"No projects found"</p>
+                    </Show>
+                </div>
+            </MultiSelectContent>
+        </MultiSelect>
+        <Show when=move || filters.projects.with(|p| !p.is_empty())>
+            <Segmented
+                options=PROJECT_FILTER
+                value=filters.project_mode.into()
+                on_change=Callback::new(move |mode| filters.project_mode.set(mode))
+            />
+        </Show>
+    }
+}
+
+#[component]
+fn ProjectOption(id: String, name: String, selected: RwSignal<HashSet<String>>) -> impl IntoView {
+    let id = StoredValue::new(id);
+    let checked = Signal::derive(move || selected.with(|s| id.with_value(|id| s.contains(id))));
+    let toggle = move |_| {
+        let id = id.get_value();
+        selected.update(|s| {
+            if !s.remove(&id) {
+                s.insert(id);
+            }
+        });
+    };
+    view! {
+        <div
+            role="option"
+            aria-selected=move || checked.get().to_string()
+            class="flex gap-2 items-center py-1.5 px-2 text-sm rounded-sm cursor-pointer hover:bg-accent hover:text-accent-foreground"
+            on:click=toggle
+        >
+            <Checkbox class="pointer-events-none" checked aria_label=name.clone() />
+            <span class="truncate">{name}</span>
+        </div>
     }
 }
 
@@ -583,7 +743,7 @@ fn ColumnHeader(column: Column, count: Signal<usize>, ctx: BoardCtx) -> impl Int
                 when=move || editing.get()
                 fallback=move || {
                     view! {
-                        <span class="flex-1 text-sm font-semibold truncate" on:dblclick=move |_| editing.set(true)>{name.get()}</span>
+                        <span class="flex-1 text-sm font-semibold truncate" on:dblclick=move |_| editing.set(ctx.project.is_some())>{name.get()}</span>
                         <Badge variant=BadgeVariant::Secondary class="tabular-nums">{move || count.get()}</Badge>
                     }
                 }
@@ -592,7 +752,7 @@ fn ColumnHeader(column: Column, count: Signal<usize>, ctx: BoardCtx) -> impl Int
                     <Input class="h-8 bg-background" bind_value=name autofocus=true />
                 </form>
             </Show>
-            <div class="flex opacity-0 transition-opacity group-hover/col:opacity-100 pointer-coarse:opacity-100">
+            <div class="flex opacity-0 transition-opacity group-hover/col:opacity-100 pointer-coarse:opacity-100" class=("hidden", ctx.project.is_none())>
                 <Button variant=ButtonVariant::Ghost size=ButtonSize::IconXs attr:title="Move left" on:click=move |_| shift("left")>
                     <ChevronLeft />
                 </Button>
@@ -613,10 +773,14 @@ fn ColumnHeader(column: Column, count: Signal<usize>, ctx: BoardCtx) -> impl Int
 #[component]
 fn BoardColumn(column: Column, ctx: BoardCtx, filters: Filters) -> impl IntoView {
     let id = column.id;
+    let lane = StoredValue::new(column.clone());
     let title = RwSignal::new(String::new());
     let over = move || ctx.over_column.get() == Some(id);
     let at_end = move || over() && ctx.over_task.get().is_none() && ctx.dragging.get().is_some();
-    let mine = move || filters.apply(ctx.tasks.get().into_iter().filter(|t| t.column_id == id).collect());
+    let mine = move || {
+        let members: HashSet<Id> = lane.with_value(|l| ctx.lane_columns(l)).into_iter().map(|c| c.id).collect();
+        filters.apply(ctx.tasks.get().into_iter().filter(|t| members.contains(&t.column_id)).collect())
+    };
     let count = Signal::derive(move || mine().len());
     let limit = RwSignal::new(PAGE);
     let hidden = move || count.get().saturating_sub(limit.get());
@@ -628,12 +792,11 @@ fn BoardColumn(column: Column, ctx: BoardCtx, filters: Filters) -> impl IntoView
             show_more();
         }
     };
-    let done = Signal::derive(move || ctx.last_column() == Some(id));
     let add = move |ev: SubmitEvent| {
         ev.prevent_default();
+        let Some(project) = ctx.project else { return };
         let body = json!({ "title": title.get_untracked(), "column_id": id });
         title.set(String::new());
-        let project = ctx.project;
         ctx.call(async move { api::post::<Value>(&format!("/api/projects/{project}/tasks"), &body).await }, false);
     };
 
@@ -652,7 +815,7 @@ fn BoardColumn(column: Column, ctx: BoardCtx, filters: Filters) -> impl IntoView
             }
             on:drop=move |ev: DragEvent| {
                 ev.prevent_default();
-                ctx.drop_at(id, None);
+                lane.with_value(|l| ctx.drop_at(l, None));
             }
         >
             <ColumnHeader column ctx count />
@@ -666,7 +829,7 @@ fn BoardColumn(column: Column, ctx: BoardCtx, filters: Filters) -> impl IntoView
                     }
                 }
             >
-                {move || mine().into_iter().take(limit.get()).map(|t| view! { <TaskCard task=t done ctx /> }).collect_view()}
+                {move || mine().into_iter().take(limit.get()).map(|t| view! { <TaskCard task=t lane ctx /> }).collect_view()}
                 <Show when=move || hidden() != 0>
                     <Button variant=ButtonVariant::Ghost size=ButtonSize::Sm class="shrink-0 text-muted-foreground" on:click=move |_| show_more()>
                         {move || format!("Show {} more", hidden().min(PAGE))}
@@ -674,7 +837,7 @@ fn BoardColumn(column: Column, ctx: BoardCtx, filters: Filters) -> impl IntoView
                 </Show>
                 <div class="h-1 rounded-full transition-all shrink-0 bg-primary" class=("opacity-0", move || !at_end()) />
             </div>
-            <form on:submit=add on:dragover=move |_| ctx.over_task.set(None)>
+            <form on:submit=add on:dragover=move |_| ctx.over_task.set(None) class=("hidden", ctx.project.is_none())>
                 <Input
                     class="bg-transparent border-transparent shadow-none hover:bg-background focus:bg-background dark:bg-transparent"
                     placeholder="+ Add task"
@@ -715,7 +878,7 @@ fn DueChip(due: String, done: bool) -> impl IntoView {
 }
 
 #[component]
-fn TaskCard(task: Task, done: Signal<bool>, ctx: BoardCtx) -> impl IntoView {
+fn TaskCard(task: Task, lane: StoredValue<Column>, ctx: BoardCtx) -> impl IntoView {
     let id = task.id;
     let edit_task = task.clone();
     let cover = md::first_image(&task.description);
@@ -724,7 +887,9 @@ fn TaskCard(task: Task, done: Signal<bool>, ctx: BoardCtx) -> impl IntoView {
     let subtasks = (task.subtasks > 0).then(|| format!("{}/{}", task.subtasks_done, task.subtasks));
     let created = fmt_date(task.created);
     let priority = task.priority;
-    let column = task.column_id;
+    let (project, column) = (task.project_id, task.column_id);
+    let done = Signal::derive(move || ctx.is_done(project, column));
+    let project_name = ctx.project.is_none().then_some(task.project);
     let before = move || ctx.over_task.get() == Some(id) && ctx.dragging.get().is_some_and(|d| d != id);
 
     view! {
@@ -737,7 +902,7 @@ fn TaskCard(task: Task, done: Signal<bool>, ctx: BoardCtx) -> impl IntoView {
             on:drop=move |ev: DragEvent| {
                 ev.prevent_default();
                 ev.stop_propagation();
-                ctx.drop_at(column, Some(id));
+                lane.with_value(|l| ctx.drop_at(l, Some(id)));
             }
         >
             <div class="h-1 rounded-full transition-all shrink-0 bg-primary" class=("hidden", move || !before()) />
@@ -777,6 +942,12 @@ fn TaskCard(task: Task, done: Signal<bool>, ctx: BoardCtx) -> impl IntoView {
                     })}
                     <span class="ml-auto">{created}</span>
                 </div>
+                {project_name.map(|name| view! {
+                    <div class="flex gap-1 items-center pt-2 text-xs border-t text-muted-foreground">
+                        <FolderKanban class="size-3 shrink-0" />
+                        <span class="truncate">{name}</span>
+                    </div>
+                })}
             </div>
         </div>
     }
@@ -785,7 +956,8 @@ fn TaskCard(task: Task, done: Signal<bool>, ctx: BoardCtx) -> impl IntoView {
 #[component]
 fn TaskModal(ctx: BoardCtx) -> impl IntoView {
     let form = ctx.form;
-    let upload_project = RwSignal::new(Some(ctx.project));
+    let upload_project = RwSignal::new(None);
+    Effect::new(move |_| upload_project.set(Some(form.project.get())));
     let cover = move || md::first_image(&form.description.get());
     let remove = move |_| {
         ctx.ui.confirm_delete("This task will be deleted.", move || {
@@ -795,7 +967,7 @@ fn TaskModal(ctx: BoardCtx) -> impl IntoView {
         });
     };
     let complete = move |_| {
-        let Some(last) = ctx.columns.get_untracked().unwrap_or_default().last().map(|c| c.id) else { return };
+        let Some(last) = ctx.project_columns(form.project.get_untracked()).last().map(|c| c.id) else { return };
         form.column.set(last);
         form.open.set(false);
         ctx.save_task(form.task());
@@ -832,7 +1004,7 @@ fn TaskModal(ctx: BoardCtx) -> impl IntoView {
                         <Choice
                             class="w-full"
                             options=Signal::derive(move || {
-                                ctx.columns.get().unwrap_or_default().into_iter().map(|c| (c.id.to_string(), c.name)).collect::<Vec<_>>()
+                                ctx.project_columns(form.project.get()).into_iter().map(|c| (c.id.to_string(), c.name)).collect::<Vec<_>>()
                             })
                             value=Signal::derive(move || form.column.get().to_string())
                             on_change=Callback::new(move |picked: String| form.column.set(picked.parse().unwrap_or_default()))
@@ -918,7 +1090,7 @@ fn SubtaskRow(subtask: Subtask, ctx: BoardCtx, list: LocalResource<Vec<Subtask>>
     let due = RwSignal::new(subtask.due.unwrap_or_default());
     let priority = RwSignal::new(subtask.priority);
     let open = RwSignal::new(false);
-    let upload_project = RwSignal::new(Some(ctx.project));
+    let upload_project = RwSignal::new(Some(ctx.form.project.get_untracked()));
     let saver = AutoSave::new();
     let payload = move || {
         let due = due.get_untracked();

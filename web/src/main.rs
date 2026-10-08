@@ -71,6 +71,7 @@ fn App() -> impl IntoView {
                     <Route path=path!("secret") view=|| view! { <pages::notes::NotesList view=View::Secret /> } />
                     <Route path=path!("notes/:id") view=pages::editor::NoteEditor />
                     <Route path=path!("projects") view=pages::projects::Projects />
+                    <Route path=path!("projects/overview") view=pages::projects::ProjectsOverview />
                     <Route path=path!("projects/:id") view=pages::projects::ProjectDetail />
                     <Route path=path!("files") view=pages::files::FilesPage />
                     <Route path=path!("vault") view=pages::vault::Vault />

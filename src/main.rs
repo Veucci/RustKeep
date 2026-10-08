@@ -192,6 +192,8 @@ fn api() -> Router<Arc<App>> {
         .route("/api/projects/{id}/action/{action}", post(projects::action))
         .route("/api/projects/{id}/columns", get(board::columns).post(board::create_column))
         .route("/api/projects/{id}/tasks", get(board::tasks).post(board::create_task))
+        .route("/api/board/columns", get(board::overview_columns))
+        .route("/api/board/tasks", get(board::overview_tasks))
         .route("/api/columns/{id}", put(board::rename_column).delete(board::remove_column))
         .route("/api/columns/{id}/move/{dir}", post(board::move_column))
         .route("/api/tasks/{id}", put(board::update_task).delete(board::remove_task))

@@ -17,13 +17,22 @@ const COLUMN_IN_PROJECT: &str = "EXISTS (SELECT 1 FROM board_columns c JOIN proj
 #[derive(Serialize, Deserialize)]
 pub struct Column {
     id: String,
+    project_id: String,
     name: String,
     position: i64,
 }
 
+const COLUMN_SELECT: &str =
+    "SELECT c.id, c.project_id, c.name, c.position FROM board_columns c JOIN projects p ON p.id = c.project_id WHERE p.user_id = ?1";
+
 pub async fn columns(app: St, user: User, Path(id): Path<String>) -> Res<Json<Vec<Column>>> {
-    let sql = format!("SELECT id, name, position FROM board_columns WHERE project_id = ?1 AND {OWNED} ORDER BY position");
-    Ok(Json(all(&app.db, &sql, params![id.as_str(), user.id.as_str()]).await?))
+    let sql = format!("{COLUMN_SELECT} AND p.id = ?2 ORDER BY c.position");
+    Ok(Json(all(&app.db, &sql, params![user.id.as_str(), id.as_str()]).await?))
+}
+
+pub async fn overview_columns(app: St, user: User) -> Res<Json<Vec<Column>>> {
+    let sql = format!("{COLUMN_SELECT} AND p.archived = 0 ORDER BY c.position, p.created");
+    Ok(Json(all(&app.db, &sql, params![user.id.as_str()]).await?))
 }
 
 #[derive(Deserialize)]
@@ -90,6 +99,8 @@ pub async fn move_column(app: St, user: User, Path((id, dir)): Path<(String, Str
 pub struct Task {
     id: String,
     column_id: String,
+    project_id: String,
+    project: String,
     title: String,
     description: String,
     due: Option<String>,
@@ -99,14 +110,20 @@ pub struct Task {
     subtasks_done: i64,
 }
 
+const TASK_SELECT: &str = "SELECT t.id, t.column_id, t.project_id, p.name AS project, t.title, t.description, t.due, \
+     t.created, t.priority, \
+     (SELECT COUNT(*) FROM subtasks s WHERE s.task_id = t.id) AS subtasks, \
+     (SELECT COUNT(*) FROM subtasks s WHERE s.task_id = t.id AND s.done = 1) AS subtasks_done \
+     FROM tasks t JOIN projects p ON p.id = t.project_id WHERE p.user_id = ?1";
+
 pub async fn tasks(app: St, user: User, Path(id): Path<String>) -> Res<Json<Vec<Task>>> {
-    let sql = format!(
-        "SELECT id, column_id, title, description, due, created, priority, \
-         (SELECT COUNT(*) FROM subtasks s WHERE s.task_id = tasks.id) AS subtasks, \
-         (SELECT COUNT(*) FROM subtasks s WHERE s.task_id = tasks.id AND s.done = 1) AS subtasks_done FROM tasks \
-         WHERE project_id = ?1 AND {OWNED} ORDER BY position, created"
-    );
-    Ok(Json(all(&app.db, &sql, params![id.as_str(), user.id.as_str()]).await?))
+    let sql = format!("{TASK_SELECT} AND p.id = ?2 ORDER BY t.position, t.created");
+    Ok(Json(all(&app.db, &sql, params![user.id.as_str(), id.as_str()]).await?))
+}
+
+pub async fn overview_tasks(app: St, user: User) -> Res<Json<Vec<Task>>> {
+    let sql = format!("{TASK_SELECT} AND p.archived = 0 ORDER BY t.position, t.created");
+    Ok(Json(all(&app.db, &sql, params![user.id.as_str()]).await?))
 }
 
 #[derive(Deserialize)]
