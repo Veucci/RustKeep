@@ -22,7 +22,6 @@ hex = "0.4"
 base64 = "0.22"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 rust_xlsxwriter = { version = "0.99", default-features = false }
-genpdf = { version = "0.2", default-features = false }
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 zip = { version = "8", default-features = false, features = ["deflate"] }
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "ico", "tiff", "tga", "qoi"] }
@@ -31,6 +30,13 @@ lopdf = { version = "0.45", default-features = false }
 calamine = { version = "0.36.1", default-features = false }
 csv = "1.4.0"
 symphonia = { version = "0.6.1", default-features = false, features = ["mp3", "flac", "vorbis", "ogg", "wav", "pcm", "aac", "isomp4", "adpcm"] }
+mermaid-rs-renderer = { version = "0.3.1", default-features = false }
+typst = "0.15.1"
+typst-pdf = "0.15.1"
+syntect = { version = "5.3", default-features = false, features = ["html", "default-themes", "regex-fancy"] }
+two-face = { version = "0.4.5", default-features = false, features = ["syntect-fancy"] }
+percent-encoding = "2"
+typst-layout = "0.15.1"
 
 [profile.release]
 opt-level = "s"

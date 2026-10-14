@@ -1,9 +1,5 @@
 use std::io::{Cursor, Write};
 
-use genpdf::elements::{Break, LinearLayout, Paragraph};
-use genpdf::fonts::{FontData, FontFamily};
-use genpdf::style::Style;
-use genpdf::{Element, Margins, SimplePageDecorator};
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use zip::write::SimpleFileOptions;
 
@@ -178,12 +174,6 @@ pub fn text(blocks: &[Block]) -> String {
     out
 }
 
-pub fn html(markdown: &str) -> String {
-    let mut out = String::new();
-    pulldown_cmark::html::push_html(&mut out, Parser::new_ext(markdown, OPTIONS));
-    out
-}
-
 fn docx_run(span: &Span, size: Option<u32>) -> String {
     let m = span.marks;
     let props = [
@@ -244,93 +234,12 @@ pub fn docx_blocks(blocks: &[Block]) -> Res<Vec<u8>> {
     Ok(zip.finish()?.into_inner())
 }
 
-fn font(bytes: &[u8]) -> Res<FontData> {
-    Ok(FontData::new(bytes.to_vec(), None)?)
-}
-
 pub const FONTS: [&[u8]; 4] = [
     include_bytes!("../assets/fonts/LiberationSans-Regular.ttf"),
     include_bytes!("../assets/fonts/LiberationSans-Bold.ttf"),
     include_bytes!("../assets/fonts/LiberationSans-Italic.ttf"),
     include_bytes!("../assets/fonts/LiberationSans-BoldItalic.ttf"),
 ];
-
-fn fonts() -> Res<FontFamily<FontData>> {
-    let [regular, bold, italic, bold_italic] = FONTS;
-    Ok(FontFamily { regular: font(regular)?, bold: font(bold)?, italic: font(italic)?, bold_italic: font(bold_italic)? })
-}
-
-fn pdf_style(marks: Marks, base: Style) -> Style {
-    let mut style = base;
-    if marks.bold {
-        style.set_bold();
-    }
-    if marks.italic || marks.code {
-        style.set_italic();
-    }
-    style
-}
-
-fn lines(spans: &[Span]) -> Vec<Vec<(&str, Marks)>> {
-    let mut out = vec![Vec::new()];
-    for span in spans {
-        for (i, part) in span.text.split('\n').enumerate() {
-            if i > 0 {
-                out.push(Vec::new());
-            }
-            out.last_mut().into_iter().for_each(|line| line.push((part, span.marks)));
-        }
-    }
-    out
-}
-
-fn pdf_block(block: &Block) -> impl Element + use<> {
-    let (base, indent, prefix) = match &block.kind {
-        Kind::Heading(level) => (Style::new().bold().with_font_size([20, 16, 13][(*level as usize).clamp(1, 3) - 1]), 0.0, String::new()),
-        Kind::Item { depth, marker } => (Style::new(), *depth as f64 * 5.0, format!("{marker} ")),
-        Kind::Quote => (Style::new().italic(), 5.0, String::new()),
-        Kind::Paragraph | Kind::Code => (Style::new(), 0.0, String::new()),
-    };
-    let mut layout = LinearLayout::vertical();
-    for (i, line) in lines(&block.spans).into_iter().enumerate() {
-        let mut p = Paragraph::default();
-        if i == 0 && !prefix.is_empty() {
-            p.push_styled(prefix.clone(), base);
-        }
-        line.into_iter().for_each(|(text, marks)| p.push_styled(text.to_owned(), pdf_style(marks, base)));
-        layout.push(p);
-    }
-    layout.padded(Margins::trbl(0, 0, 2, indent))
-}
-
-fn pdf_document(title: &str) -> Res<genpdf::Document> {
-    let mut doc = genpdf::Document::new(fonts()?);
-    doc.set_title(title);
-    doc.set_minimal_conformance();
-    doc.set_font_size(11);
-    let mut decorator = SimplePageDecorator::new();
-    decorator.set_margins(18);
-    doc.set_page_decorator(decorator);
-    Ok(doc)
-}
-
-fn render_pdf(mut doc: genpdf::Document, blocks: &[Block]) -> Res<Vec<u8>> {
-    blocks.iter().for_each(|b| doc.push(pdf_block(b)));
-    let mut out = Vec::new();
-    doc.render(&mut out)?;
-    Ok(out)
-}
-
-pub fn pdf(title: &str, markdown: &str) -> Res<Vec<u8>> {
-    let mut doc = pdf_document(title)?;
-    doc.push(Paragraph::new(title).styled(Style::new().bold().with_font_size(22)));
-    doc.push(Break::new(1));
-    render_pdf(doc, &parse(markdown))
-}
-
-pub fn pdf_blocks(title: &str, blocks: &[Block]) -> Res<Vec<u8>> {
-    render_pdf(pdf_document(title)?, blocks)
-}
 
 #[cfg(test)]
 mod tests {
@@ -357,13 +266,11 @@ mod tests {
     fn renders_documents() {
         let md = "# Heading \u{130}\u{131}\n\nSome **bold** and `code`\n\n```\na\nb\n```";
         assert!(docx("Note", md).is_ok_and(|b| b.starts_with(b"PK")));
-        assert!(pdf("Note", md).is_ok_and(|b| b.starts_with(b"%PDF")));
     }
 
     #[test]
     fn converts_between_plain_and_markdown() {
         assert_eq!(plain("one\r\ntwo\r\n\r\n\r\nthree\n").len(), 2);
         assert_eq!(text(&parse("# Title\n\n- a\n- b\n\nend **bold**")), "Title\n\n\u{2022} a\n\u{2022} b\n\nend bold");
-        assert!(html("**x**").contains("<strong>x</strong>"));
     }
 }

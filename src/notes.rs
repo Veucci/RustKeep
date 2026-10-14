@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 
 use crate::export;
 use crate::files::attachment;
+use crate::{images, markdown};
 use crate::{App, St};
 use crate::auth::User;
 use crate::util::{Res, all, bad, exec, one, token, uuid};
@@ -111,7 +112,11 @@ pub async fn export(app: St, user: User, Path((id, format)): Path<(String, Strin
     let title = if n.title.trim().is_empty() { "Untitled" } else { n.title.trim() };
     let (mime, bytes) = match format.as_str() {
         "docx" => ("application/vnd.openxmlformats-officedocument.wordprocessingml.document", export::docx(title, &n.body)?),
-        "pdf" => ("application/pdf", export::pdf(title, &n.body)?),
+        "pdf" => {
+            let images = images::load(&app, &user, None, &n.body).await;
+            let (title, body) = (title.to_owned(), n.body.clone());
+            ("application/pdf", tokio::task::spawn_blocking(move || markdown::pdf(&title, &body, images, true)).await??)
+        }
         _ => return Err(bad("Invalid format")),
     };
     let disposition = attachment(&format!("{title}.{format}"));

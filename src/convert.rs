@@ -12,6 +12,7 @@ use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 
 use crate::export;
+use crate::markdown::{self, Images};
 use crate::util::{Res, bad, esc};
 
 const IMAGES: &[&str] = &["png", "jpg", "webp", "gif", "bmp", "ico", "tiff", "tga", "qoi", "pdf"];
@@ -86,12 +87,16 @@ pub fn mime(ext: &str) -> &'static str {
     MIME.iter().find(|(e, _)| *e == ext).map_or("application/octet-stream", |(_, m)| m)
 }
 
-pub fn run(bytes: Vec<u8>, title: &str, from: &str, to: &str) -> Res<Vec<u8>> {
+pub fn is_markdown(ext: &str) -> bool {
+    alias(ext) == "md"
+}
+
+pub fn run(bytes: Vec<u8>, title: &str, from: &str, to: &str, images: Images) -> Res<Vec<u8>> {
     let from = alias(from);
     match source(&from).0 {
         Source::Image => encode_image(decode_image(&bytes, &from)?, to),
         Source::Svg => encode_image(rasterize(&bytes)?, to),
-        Source::Document => write_text(read_text(&bytes, &from)?, title, to),
+        Source::Document => write_text(read_text(&bytes, &from)?, title, to, images),
         Source::Table => write_table(read_table(bytes, &from)?, to),
         Source::Audio => to_wav(bytes, &from),
         Source::Unsupported => Err(bad("This conversion is not supported")),
@@ -212,28 +217,21 @@ fn pdf_text(bytes: &[u8]) -> Res<String> {
     Ok(lines.join("\n").trim().to_owned())
 }
 
-fn write_text(text: Text, title: &str, to: &str) -> Res<Vec<u8>> {
-    let blocks = match &text {
-        Text::Markdown(md) => export::parse(md),
-        Text::Plain(t) => export::plain(t),
-    };
+fn write_text(text: Text, title: &str, to: &str, images: Images) -> Res<Vec<u8>> {
     match (to, text) {
-        ("pdf", _) => export::pdf_blocks(title, &blocks),
-        ("docx", _) => export::docx_blocks(&blocks),
-        ("html", Text::Markdown(md)) => Ok(html_page(title, &export::html(&md))),
-        ("html", Text::Plain(t)) => Ok(html_page(title, &paragraphs(&t))),
-        (_, Text::Markdown(_)) => Ok(export::text(&blocks).into_bytes()),
+        ("pdf", Text::Markdown(md)) => markdown::pdf(title, &md, images, false),
+        ("pdf", Text::Plain(t)) => markdown::plain_pdf(title, &t),
+        ("html", Text::Markdown(md)) => Ok(markdown::html(title, &md, images).into_bytes()),
+        ("html", Text::Plain(t)) => Ok(markdown::page(title, &paragraphs(&t)).into_bytes()),
+        ("docx", Text::Markdown(md)) => export::docx_blocks(&export::parse(&md)),
+        ("docx", Text::Plain(t)) => export::docx_blocks(&export::plain(&t)),
+        (_, Text::Markdown(md)) => Ok(export::text(&export::parse(&md)).into_bytes()),
         (_, Text::Plain(t)) => Ok(t.into_bytes()),
     }
 }
 
 fn paragraphs(text: &str) -> String {
     export::plain(text).iter().map(|b| format!("<p>{}</p>\n", esc(&export::text(std::slice::from_ref(b))).replace('\n', "<br>"))).collect()
-}
-
-fn html_page(title: &str, body: &str) -> Vec<u8> {
-    format!("<!doctype html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>{}</title>\n</head>\n<body>\n{body}</body>\n</html>\n", esc(title))
-        .into_bytes()
 }
 
 fn read_table(bytes: Vec<u8>, from: &str) -> Res<Vec<Vec<String>>> {
@@ -375,37 +373,37 @@ mod tests {
     #[test]
     fn converts_images() {
         for to in IMAGES {
-            let out = run(png(), "pic", "png", to).unwrap_or_else(|_| panic!("png to {to}"));
+            let out = run(png(), "pic", "png", to, Images::new()).unwrap_or_else(|_| panic!("png to {to}"));
             assert!(!out.is_empty());
         }
-        assert!(run(png(), "pic", "png", "pdf").unwrap().starts_with(b"%PDF"));
-        let jpg = image::load_from_memory(&run(png(), "pic", "png", "jpg").unwrap()).unwrap().to_rgb8();
+        assert!(run(png(), "pic", "png", "pdf", Images::new()).unwrap().starts_with(b"%PDF"));
+        let jpg = image::load_from_memory(&run(png(), "pic", "png", "jpg", Images::new()).unwrap()).unwrap().to_rgb8();
         assert_eq!(jpg.dimensions(), (4, 3));
         assert!(jpg.get_pixel(0, 0)[1] > 100, "transparent areas are flattened onto white");
         let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="5"><rect width="10" height="5" fill="red"/><text y="4">Hi</text></svg>"#;
-        assert!(run(svg.to_vec(), "s", "svg", "png").is_ok_and(|b| b.starts_with(b"\x89PNG")));
+        assert!(run(svg.to_vec(), "s", "svg", "png", Images::new()).is_ok_and(|b| b.starts_with(b"\x89PNG")));
     }
 
     #[test]
     fn converts_documents() {
         let md = b"# Title\n\n- a & b\n".to_vec();
-        assert!(run(md.clone(), "n", "md", "pdf").is_ok_and(|b| b.starts_with(b"%PDF")));
-        assert!(run(md.clone(), "n", "md", "html").is_ok_and(|b| String::from_utf8(b).unwrap().contains("<li>a &amp; b</li>")));
-        let docx = run(md, "n", "md", "docx").unwrap();
-        assert_eq!(run(docx, "n", "docx", "txt").unwrap(), "Title\n\n\u{2022} a & b\n\n".as_bytes());
-        let pdf = run(b"hello pdf".to_vec(), "n", "txt", "pdf").unwrap();
-        let t = String::from_utf8(run(pdf, "n", "pdf", "txt").unwrap()).unwrap();
-        assert_eq!(t, "hello pdf");
+        assert!(run(md.clone(), "n", "md", "pdf", Images::new()).is_ok_and(|b| b.starts_with(b"%PDF")));
+        assert!(run(md.clone(), "n", "md", "html", Images::new()).is_ok_and(|b| String::from_utf8(b).unwrap().contains("<li>a &amp; b</li>")));
+        let docx = run(md, "n", "md", "docx", Images::new()).unwrap();
+        assert_eq!(run(docx, "n", "docx", "txt", Images::new()).unwrap(), "Title\n\n\u{2022} a & b\n\n".as_bytes());
+        let pdf = run(b"hello pdf".to_vec(), "n", "txt", "pdf", Images::new()).unwrap();
+        let t = String::from_utf8(run(pdf, "n", "pdf", "txt", Images::new()).unwrap()).unwrap();
+        assert!(t.starts_with("hello pdf"));
     }
 
     #[test]
     fn converts_tables() {
-        let json = run(b"name,age\nAda,36\n".to_vec(), "t", "csv", "json").unwrap();
+        let json = run(b"name,age\nAda,36\n".to_vec(), "t", "csv", "json", Images::new()).unwrap();
         assert_eq!(serde_json::from_slice::<Value>(&json).unwrap(), serde_json::json!([{ "name": "Ada", "age": "36" }]));
-        let csv = run(br#"[{"a":1,"b":null},{"b":"x, y"}]"#.to_vec(), "t", "json", "csv").unwrap();
+        let csv = run(br#"[{"a":1,"b":null},{"b":"x, y"}]"#.to_vec(), "t", "json", "csv", Images::new()).unwrap();
         assert_eq!(csv, b"a,b\n1,\n,\"x, y\"\n");
-        let xlsx = run(b"a,b\n1,two\n".to_vec(), "t", "csv", "xlsx").unwrap();
-        assert_eq!(run(xlsx, "t", "xlsx", "csv").unwrap(), b"a,b\n1,two\n");
+        let xlsx = run(b"a,b\n1,two\n".to_vec(), "t", "csv", "xlsx", Images::new()).unwrap();
+        assert_eq!(run(xlsx, "t", "xlsx", "csv", Images::new()).unwrap(), b"a,b\n1,two\n");
     }
 
     #[test]
@@ -413,6 +411,6 @@ mod tests {
         let pcm: Vec<i16> = (0..800).map(|i| (i * 40) as i16).collect();
         let source = wav(2, 8000, &pcm);
         assert_eq!(to_wav(source.clone(), "wav").unwrap(), source);
-        assert!(run(b"not audio".to_vec(), "a", "mp3", "wav").is_err());
+        assert!(run(b"not audio".to_vec(), "a", "mp3", "wav", Images::new()).is_err());
     }
 }

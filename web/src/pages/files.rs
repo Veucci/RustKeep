@@ -10,8 +10,10 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 use serde::Serialize;
 use serde_json::{Value, json};
-use wasm_bindgen::JsValue;
-use web_sys::{DragEvent, File, MouseEvent};
+use std::time::Duration;
+
+use wasm_bindgen::{JsCast, JsValue};
+use web_sys::{DragEvent, File, HtmlElement, MouseEvent};
 
 use crate::api;
 use crate::components::ui::button::{Button, ButtonSize, ButtonVariant};
@@ -37,6 +39,15 @@ const MENU_BTN: &str = "flex gap-3 items-center px-3 w-full h-9 text-sm text-lef
 
 fn raw_url(id: &str) -> String {
     api::url(&format!("/api/files/{id}/raw"))
+}
+
+fn save_file(url: &str, name: &str) {
+    let Ok(link) = document().create_element("a") else { return };
+    let _ = link.set_attribute("href", url);
+    let _ = link.set_attribute("download", name);
+    if let Ok(link) = link.dyn_into::<HtmlElement>() {
+        link.click();
+    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -204,7 +215,7 @@ enum Dialog {
     Rename(String),
     Move(Vec<String>),
     Share(String),
-    Convert(String),
+    Convert(Vec<String>),
     Conflict(Vec<File>, Option<String>, Vec<String>),
 }
 
@@ -361,6 +372,23 @@ impl Drive {
             let _ = dt.set_data(DRAG_TYPE, &ids);
             dt.set_effect_allowed("move");
         }
+    }
+
+    fn download(self, entries: Vec<Entry>) {
+        for (i, e) in (0u64..).zip(entries.iter().filter(|e| !e.is_dir())) {
+            let (url, name) = (raw_url(e.id()), e.name().to_owned());
+            set_timeout(move || save_file(&url, &name), Duration::from_millis(300 * i));
+        }
+    }
+
+    fn copy_links(self, entries: Vec<Entry>) {
+        let links: Vec<String> = entries.iter().filter(|e| !e.is_dir()).map(|e| api::absolute(&format!("/api/files/{}/raw", e.id()))).collect();
+        copy(self.ui, &links.join("\n"));
+    }
+
+    fn convert(self, entries: Vec<Entry>) {
+        let ids: Vec<String> = entries.iter().filter(|e| !e.is_dir()).map(|e| e.id().to_owned()).collect();
+        self.dialog.set(Some(Dialog::Convert(ids)));
     }
 
     fn toggle(self, id: &str) {
@@ -661,6 +689,18 @@ fn BulkBar() -> impl IntoView {
                 {move || if all_starred() { "Unstar" } else { "Star" }}
             </Button>
             <Show when=any_file>
+                <Button variant=ButtonVariant::Ghost size=ButtonSize::Sm on:click=move |_| d.download(untrack(picked))>
+                    <Download />
+                    "Download"
+                </Button>
+                <Button variant=ButtonVariant::Ghost size=ButtonSize::Sm on:click=move |_| d.convert(untrack(picked))>
+                    <FileOutput />
+                    "Convert"
+                </Button>
+                <Button variant=ButtonVariant::Ghost size=ButtonSize::Sm on:click=move |_| d.copy_links(untrack(picked))>
+                    <Copy />
+                    "Copy links"
+                </Button>
                 <Button variant=ButtonVariant::Ghost size=ButtonSize::Sm on:click=move |_| d.archive(untrack(picked), !untrack(archived))>
                     {move || if archived() { view! { <ArchiveRestore /> "Restore" }.into_any() } else { view! { <Archive /> "Archive" }.into_any() }}
                 </Button>
@@ -906,8 +946,8 @@ fn ItemMenu() -> impl IntoView {
                             <Download />
                             "Download"
                         </a>
-                        <MenuItem label="Copy private link" action=act(|d, e| copy(d.ui, &api::absolute(&format!("/api/files/{}/raw", e.id()))))><Copy /></MenuItem>
-                        <MenuItem label="Convert" action=act(|d, e| d.dialog.set(Some(Dialog::Convert(e.id().to_owned()))))><FileOutput /></MenuItem>
+                        <MenuItem label="Copy private link" action=act(|d, e| d.copy_links(vec![e]))><Copy /></MenuItem>
+                        <MenuItem label="Convert" action=act(|d, e| d.convert(vec![e]))><FileOutput /></MenuItem>
                     </Show>
                     <div class="my-1 h-px bg-border" />
                     <MenuItem label="Share" action=act(|d, e| d.dialog.set(Some(Dialog::Share(e.id().to_owned())))) ><Share2 /></MenuItem>
@@ -1060,7 +1100,7 @@ fn Dialogs() -> impl IntoView {
                 }
                 Dialog::Move(ids) => view! { <MoveDialog open ids /> }.into_any(),
                 Dialog::Share(id) => share_dialog(d, open, &id),
-                Dialog::Convert(id) => view! { <ConvertDialog open id /> }.into_any(),
+                Dialog::Convert(ids) => view! { <ConvertDialog open ids /> }.into_any(),
                 Dialog::Conflict(files, folder, names) => view! { <ConflictDialog open files folder names /> }.into_any(),
             }
         })}
@@ -1113,39 +1153,76 @@ fn NameDialog(open: RwSignal<bool>, title: &'static str, initial: String, on_sub
     }
 }
 
+fn format_options(support: &[(String, Vec<String>)]) -> Vec<(String, String)> {
+    let mut formats: Vec<String> = Vec::new();
+    for format in support.iter().flat_map(|(_, list)| list) {
+        if !formats.contains(format) {
+            formats.push(format.clone());
+        }
+    }
+    let count = |f: &String| support.iter().filter(|(_, list)| list.contains(f)).count();
+    formats.sort_by_key(|f| Reverse(count(f)));
+    let label = |f: &String| if support.len() > 1 { format!("{} ({} of {})", f.to_uppercase(), count(f), support.len()) } else { f.to_uppercase() };
+    formats.iter().map(|f| (f.clone(), label(f))).collect()
+}
+
 #[component]
-fn ConvertDialog(open: RwSignal<bool>, id: String) -> impl IntoView {
+fn ConvertDialog(open: RwSignal<bool>, ids: Vec<String>) -> impl IntoView {
     let d = use_drive();
-    let name = untrack(|| d.entry(&id)).map(|e| e.name().to_owned()).unwrap_or_default();
-    let path = StoredValue::new(format!("/api/files/{id}/convert"));
-    let formats = LocalResource::new(move || async move { d.ui.run(api::get::<Vec<String>>(&path.get_value())).await.unwrap_or_default() });
-    let options = Signal::derive(move || formats.get().unwrap_or_default().into_iter().map(|f| (f.clone(), f.to_uppercase())).collect::<Vec<_>>());
+    let subject = match ids.as_slice() {
+        [one] => untrack(|| d.entry(one)).map(|e| e.name().to_owned()).unwrap_or_default(),
+        many => format!("{} files selected", many.len()),
+    };
+    let ids = StoredValue::new(ids);
+    let support = LocalResource::new(move || async move {
+        let mut support = Vec::new();
+        for id in ids.get_value() {
+            let formats = d.ui.run(api::get::<Vec<String>>(&format!("/api/files/{id}/convert"))).await.unwrap_or_default();
+            support.push((id, formats));
+        }
+        support
+    });
+    let options = Signal::derive(move || format_options(&support.get().unwrap_or_default()));
     let picked = RwSignal::new(String::new());
     let target = Signal::derive(move || {
         let first = || options.with(|o| o.first().map(|(key, _)| key.clone())).unwrap_or_default();
         picked.with(|p| if p.is_empty() { first() } else { p.clone() })
     });
-    let converting = RwSignal::new(false);
+    let progress = RwSignal::new(None::<(usize, usize)>);
     let start = move |_| {
-        let body = json!({ "to": target.get_untracked() });
-        converting.set(true);
+        let to = target.get_untracked();
+        let jobs: Vec<String> =
+            support.get_untracked().unwrap_or_default().into_iter().filter(|(_, formats)| formats.contains(&to)).map(|(id, _)| id).collect();
+        let (total, skipped) = (jobs.len(), ids.with_value(Vec::len) - jobs.len());
+        progress.set(Some((0, total)));
         spawn_local(async move {
-            match d.ui.run(api::post::<api::Uploaded>(&path.get_value(), &body)).await {
-                Some(saved) => {
-                    d.ui.notify(format!("Saved as {}", saved.name));
-                    d.files.refetch();
-                    open.set(false);
-                }
-                None => converting.set(false),
+            let mut saved = Vec::new();
+            for id in jobs {
+                let path = format!("/api/files/{id}/convert");
+                saved.extend(d.ui.run(api::post::<api::Uploaded>(&path, &json!({ "to": to }))).await.map(|s| s.name));
+                progress.update(|p| p.iter_mut().for_each(|(done, _)| *done += 1));
             }
+            let note = if skipped > 0 { format!(", {skipped} skipped (not convertible to {})", to.to_uppercase()) } else { String::new() };
+            match saved.as_slice() {
+                [name] if total == 1 && skipped == 0 => d.ui.notify(format!("Saved as {name}")),
+                _ => d.ui.notify(format!("Converted {} of {total} file(s){note}", saved.len())),
+            }
+            d.files.refetch();
+            d.selected.set(Vec::new());
+            open.set(false);
         });
+    };
+    let label = move || match progress.get() {
+        Some((done, total)) if total > 1 => format!("Converting {}/{total}...", done + 1),
+        Some(_) => "Converting...".to_owned(),
+        None => "Convert".to_owned(),
     };
     view! {
         <Modal open title="Convert" class="overflow-visible!">
-            <p class="text-sm break-all text-muted-foreground">{name.clone()}</p>
-            {move || match formats.get() {
+            <p class="text-sm break-all text-muted-foreground">{subject.clone()}</p>
+            {move || match support.get() {
                 None => view! { <div class="flex justify-center py-2"><Spinner /></div> }.into_any(),
-                Some(list) if list.is_empty() => view! { <p class="text-sm">"This file type cannot be converted."</p> }.into_any(),
+                Some(_) if options.with(Vec::is_empty) => view! { <p class="text-sm">"These files cannot be converted."</p> }.into_any(),
                 Some(_) => view! {
                     <div class="flex flex-col gap-2">
                         <Label>"Convert to"</Label>
@@ -1156,8 +1233,8 @@ fn ConvertDialog(open: RwSignal<bool>, id: String) -> impl IntoView {
             }}
             <div class="flex gap-2 justify-end">
                 <Button variant=ButtonVariant::Ghost on:click=move |_| open.set(false)>"Cancel"</Button>
-                <Button attr:disabled=move || converting.get() || target.with(String::is_empty) on:click=start>
-                    {move || if converting.get() { view! { <Spinner /> "Converting..." }.into_any() } else { view! { <FileOutput /> "Convert" }.into_any() }}
+                <Button attr:disabled=move || progress.with(Option::is_some) || target.with(String::is_empty) on:click=start>
+                    {move || if progress.with(Option::is_some) { view! { <Spinner /> {label} }.into_any() } else { view! { <FileOutput /> {label} }.into_any() }}
                 </Button>
             </div>
         </Modal>

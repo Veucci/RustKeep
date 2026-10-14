@@ -8,6 +8,8 @@ mod dashboard;
 mod export;
 mod files;
 mod folders;
+mod images;
+mod markdown;
 mod migrate;
 mod notes;
 mod projects;

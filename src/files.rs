@@ -8,6 +8,8 @@ use serde_json::{Value, json};
 
 use crate::auth::User;
 use crate::convert;
+use crate::images;
+use crate::markdown::Images;
 use crate::util::{Res, all, archive_set, bad, err, exec, one, token, uuid};
 use crate::{App, St};
 
@@ -206,8 +208,13 @@ pub async fn convert(app: St, user: User, Path(id): Path<String>, Json(r): Json<
         return Err(bad("Files larger than 50 MB cannot be converted"));
     }
     let bytes = app.storage.read(&f.key).await?;
+    let images = if convert::is_markdown(from) && matches!(r.to.as_str(), "pdf" | "html") {
+        images::load(&app, &user, f.folder_id.as_deref(), &String::from_utf8_lossy(&bytes)).await
+    } else {
+        Images::new()
+    };
     let (title, source, target) = (stem.to_owned(), from.to_owned(), r.to.clone());
-    let out = tokio::task::spawn_blocking(move || convert::run(bytes, &title, &source, &target))
+    let out = tokio::task::spawn_blocking(move || convert::run(bytes, &title, &source, &target, images))
         .await?
         .map_err(|_| err(StatusCode::UNPROCESSABLE_ENTITY, "This file could not be converted"))?;
     let folder = f.folder_id.as_deref();
