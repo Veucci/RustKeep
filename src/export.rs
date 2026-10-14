@@ -151,6 +151,39 @@ pub fn parse(markdown: &str) -> Vec<Block> {
     reader.blocks
 }
 
+pub fn plain(text: &str) -> Vec<Block> {
+    let text = text.replace("\r\n", "\n");
+    text.split("\n\n")
+        .map(|p| p.trim_matches('\n'))
+        .filter(|p| !p.trim().is_empty())
+        .map(|p| Block { kind: Kind::Paragraph, spans: vec![Span { text: p.to_owned(), marks: Marks::default() }] })
+        .collect()
+}
+
+pub fn text(blocks: &[Block]) -> String {
+    let mut out = String::new();
+    let mut in_list = false;
+    for b in blocks {
+        let item = match &b.kind {
+            Kind::Item { depth, marker } => Some(format!("{}{marker} ", "  ".repeat(depth - 1))),
+            _ => None,
+        };
+        if !out.is_empty() {
+            out.push_str(if in_list && item.is_some() { "\n" } else { "\n\n" });
+        }
+        in_list = item.is_some();
+        out.extend(item);
+        b.spans.iter().for_each(|s| out.push_str(&s.text));
+    }
+    out
+}
+
+pub fn html(markdown: &str) -> String {
+    let mut out = String::new();
+    pulldown_cmark::html::push_html(&mut out, Parser::new_ext(markdown, OPTIONS));
+    out
+}
+
 fn docx_run(span: &Span, size: Option<u32>) -> String {
     let m = span.marks;
     let props = [
@@ -186,7 +219,13 @@ const STYLES: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><
 
 pub fn docx(title: &str, markdown: &str) -> Res<Vec<u8>> {
     let heading = Block { kind: Kind::Heading(1), spans: vec![Span { text: title.to_owned(), marks: Marks::default() }] };
-    let body: String = std::iter::once(heading).chain(parse(markdown)).map(|b| docx_paragraph(&b)).collect();
+    let mut blocks = parse(markdown);
+    blocks.insert(0, heading);
+    docx_blocks(&blocks)
+}
+
+pub fn docx_blocks(blocks: &[Block]) -> Res<Vec<u8>> {
+    let body: String = blocks.iter().map(docx_paragraph).collect();
     let document = format!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{body}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="0" w:footer="0" w:gutter="0"/></w:sectPr></w:body></w:document>"#
     );
@@ -209,13 +248,16 @@ fn font(bytes: &[u8]) -> Res<FontData> {
     Ok(FontData::new(bytes.to_vec(), None)?)
 }
 
+pub const FONTS: [&[u8]; 4] = [
+    include_bytes!("../assets/fonts/LiberationSans-Regular.ttf"),
+    include_bytes!("../assets/fonts/LiberationSans-Bold.ttf"),
+    include_bytes!("../assets/fonts/LiberationSans-Italic.ttf"),
+    include_bytes!("../assets/fonts/LiberationSans-BoldItalic.ttf"),
+];
+
 fn fonts() -> Res<FontFamily<FontData>> {
-    Ok(FontFamily {
-        regular: font(include_bytes!("../assets/fonts/LiberationSans-Regular.ttf"))?,
-        bold: font(include_bytes!("../assets/fonts/LiberationSans-Bold.ttf"))?,
-        italic: font(include_bytes!("../assets/fonts/LiberationSans-Italic.ttf"))?,
-        bold_italic: font(include_bytes!("../assets/fonts/LiberationSans-BoldItalic.ttf"))?,
-    })
+    let [regular, bold, italic, bold_italic] = FONTS;
+    Ok(FontFamily { regular: font(regular)?, bold: font(bold)?, italic: font(italic)?, bold_italic: font(bold_italic)? })
 }
 
 fn pdf_style(marks: Marks, base: Style) -> Style {
@@ -261,7 +303,7 @@ fn pdf_block(block: &Block) -> impl Element + use<> {
     layout.padded(Margins::trbl(0, 0, 2, indent))
 }
 
-pub fn pdf(title: &str, markdown: &str) -> Res<Vec<u8>> {
+fn pdf_document(title: &str) -> Res<genpdf::Document> {
     let mut doc = genpdf::Document::new(fonts()?);
     doc.set_title(title);
     doc.set_minimal_conformance();
@@ -269,12 +311,25 @@ pub fn pdf(title: &str, markdown: &str) -> Res<Vec<u8>> {
     let mut decorator = SimplePageDecorator::new();
     decorator.set_margins(18);
     doc.set_page_decorator(decorator);
-    doc.push(Paragraph::new(title).styled(Style::new().bold().with_font_size(22)));
-    doc.push(Break::new(1));
-    parse(markdown).iter().for_each(|b| doc.push(pdf_block(b)));
+    Ok(doc)
+}
+
+fn render_pdf(mut doc: genpdf::Document, blocks: &[Block]) -> Res<Vec<u8>> {
+    blocks.iter().for_each(|b| doc.push(pdf_block(b)));
     let mut out = Vec::new();
     doc.render(&mut out)?;
     Ok(out)
+}
+
+pub fn pdf(title: &str, markdown: &str) -> Res<Vec<u8>> {
+    let mut doc = pdf_document(title)?;
+    doc.push(Paragraph::new(title).styled(Style::new().bold().with_font_size(22)));
+    doc.push(Break::new(1));
+    render_pdf(doc, &parse(markdown))
+}
+
+pub fn pdf_blocks(title: &str, blocks: &[Block]) -> Res<Vec<u8>> {
+    render_pdf(pdf_document(title)?, blocks)
 }
 
 #[cfg(test)]
@@ -303,5 +358,12 @@ mod tests {
         let md = "# Heading \u{130}\u{131}\n\nSome **bold** and `code`\n\n```\na\nb\n```";
         assert!(docx("Note", md).is_ok_and(|b| b.starts_with(b"PK")));
         assert!(pdf("Note", md).is_ok_and(|b| b.starts_with(b"%PDF")));
+    }
+
+    #[test]
+    fn converts_between_plain_and_markdown() {
+        assert_eq!(plain("one\r\ntwo\r\n\r\n\r\nthree\n").len(), 2);
+        assert_eq!(text(&parse("# Title\n\n- a\n- b\n\nend **bold**")), "Title\n\n\u{2022} a\n\u{2022} b\n\nend bold");
+        assert!(html("**x**").contains("<strong>x</strong>"));
     }
 }

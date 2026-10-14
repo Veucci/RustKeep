@@ -11,6 +11,7 @@ use libsql::Connection;
 use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
 
+#[derive(Debug)]
 pub struct AppError(pub StatusCode, pub String);
 pub type Res<T> = Result<T, AppError>;
 

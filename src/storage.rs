@@ -43,14 +43,33 @@ impl Storage {
 
     pub async fn save(&self, key: &str, field: &mut Field<'_>) -> Res<i64> {
         let path = self.local(key);
-        let result = match (write_field(field, &path).await, &self.s3) {
-            (Ok(size), Some(s3)) => s3.put(key, &path, size).await.map(|()| size),
+        let written = write_field(field, &path).await;
+        self.commit(key, &path, written).await
+    }
+
+    pub async fn save_bytes(&self, key: &str, bytes: &[u8]) -> Res<i64> {
+        let path = self.local(key);
+        let written = tokio::fs::write(&path, bytes).await.map(|()| bytes.len() as i64).map_err(Into::into);
+        self.commit(key, &path, written).await
+    }
+
+    async fn commit(&self, key: &str, path: &Path, written: Res<i64>) -> Res<i64> {
+        let result = match (written, &self.s3) {
+            (Ok(size), Some(s3)) => s3.put(key, path, size).await.map(|()| size),
             (written, _) => written,
         };
         if self.s3.is_some() || result.is_err() {
-            let _ = tokio::fs::remove_file(&path).await;
+            let _ = tokio::fs::remove_file(path).await;
         }
         result
+    }
+
+    pub async fn read(&self, key: &str) -> Res<Vec<u8>> {
+        let path = self.local(key);
+        match &self.s3 {
+            Some(s3) if !tokio::fs::try_exists(&path).await.unwrap_or(false) => s3.bytes(key).await,
+            _ => Ok(tokio::fs::read(path).await?),
+        }
     }
 
     pub async fn serve(&self, key: &str, req: Request) -> Res<Response> {
@@ -147,6 +166,14 @@ impl S3 {
             }
         }
         Ok(out.body(Body::from_stream(res.bytes_stream()))?)
+    }
+
+    async fn bytes(&self, key: &str) -> Res<Vec<u8>> {
+        let res = self.signed(Method::GET, key).send().await?;
+        if res.status() == StatusCode::NOT_FOUND {
+            return Err(not_found());
+        }
+        Ok(res.error_for_status()?.bytes().await?.to_vec())
     }
 
     async fn delete(&self, key: &str) {

@@ -1,7 +1,7 @@
 use std::cmp::Reverse;
 
 use icons::{
-    Archive, ArchiveRestore, ChevronRight, Copy, Download, EllipsisVertical, Eye, Folder as FolderIcon, FolderInput,
+    Archive, ArchiveRestore, ChevronRight, Copy, Download, EllipsisVertical, Eye, FileOutput, Folder as FolderIcon, FolderInput,
     FolderOpen, FolderPlus, Info, LayoutGrid, Link, List, Pencil, Share2, Star, StarOff, Trash2, Upload, X,
 };
 use leptos::ev::{self, SubmitEvent};
@@ -19,10 +19,12 @@ use crate::components::ui::card::Card;
 use crate::components::ui::checkbox::Checkbox;
 use crate::components::ui::empty::{Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyMediaVariant, EmptyTitle};
 use crate::components::ui::input::Input;
+use crate::components::ui::label::Label;
+use crate::components::ui::spinner::Spinner;
 use crate::id::Id;
 use crate::pages::drive::{FileItem, Folder, Kind, KindIcon, Preview, trail};
 use crate::widgets::{
-    ListSkeleton, Modal, Options, PageHeader, SearchBox, Segmented, ShareDialog, SortSelect, Ui, copy, fmt_date, fmt_size,
+    Choice, ListSkeleton, Modal, Options, PageHeader, SearchBox, Segmented, ShareDialog, SortSelect, Ui, copy, fmt_date, fmt_size,
     fmt_time, has, query_state, use_ui,
 };
 
@@ -202,6 +204,7 @@ enum Dialog {
     Rename(String),
     Move(Vec<String>),
     Share(String),
+    Convert(String),
     Conflict(Vec<File>, Option<String>, Vec<String>),
 }
 
@@ -888,7 +891,7 @@ fn ItemMenu() -> impl IntoView {
         {move || target().map(|(e, x, y)| {
             let w = window().inner_width().ok().and_then(|v| v.as_f64()).unwrap_or(1024.0) as i32;
             let h = window().inner_height().ok().and_then(|v| v.as_f64()).unwrap_or(768.0) as i32;
-            let style = format!("left: {}px; top: {}px", x.min(w - 232).max(8), y.min(h - 420).max(8));
+            let style = format!("left: {}px; top: {}px", x.min(w - 232).max(8), y.min(h - 460).max(8));
             let e = StoredValue::new(e);
             let act = move |f: fn(Drive, Entry)| Callback::new(move |_| f(d, e.get_value()));
             let is_dir = e.with_value(Entry::is_dir);
@@ -904,6 +907,7 @@ fn ItemMenu() -> impl IntoView {
                             "Download"
                         </a>
                         <MenuItem label="Copy private link" action=act(|d, e| copy(d.ui, &api::absolute(&format!("/api/files/{}/raw", e.id()))))><Copy /></MenuItem>
+                        <MenuItem label="Convert" action=act(|d, e| d.dialog.set(Some(Dialog::Convert(e.id().to_owned()))))><FileOutput /></MenuItem>
                     </Show>
                     <div class="my-1 h-px bg-border" />
                     <MenuItem label="Share" action=act(|d, e| d.dialog.set(Some(Dialog::Share(e.id().to_owned())))) ><Share2 /></MenuItem>
@@ -1056,6 +1060,7 @@ fn Dialogs() -> impl IntoView {
                 }
                 Dialog::Move(ids) => view! { <MoveDialog open ids /> }.into_any(),
                 Dialog::Share(id) => share_dialog(d, open, &id),
+                Dialog::Convert(id) => view! { <ConvertDialog open id /> }.into_any(),
                 Dialog::Conflict(files, folder, names) => view! { <ConflictDialog open files folder names /> }.into_any(),
             }
         })}
@@ -1104,6 +1109,57 @@ fn NameDialog(open: RwSignal<bool>, title: &'static str, initial: String, on_sub
                     <Button>"Save"</Button>
                 </div>
             </form>
+        </Modal>
+    }
+}
+
+#[component]
+fn ConvertDialog(open: RwSignal<bool>, id: String) -> impl IntoView {
+    let d = use_drive();
+    let name = untrack(|| d.entry(&id)).map(|e| e.name().to_owned()).unwrap_or_default();
+    let path = StoredValue::new(format!("/api/files/{id}/convert"));
+    let formats = LocalResource::new(move || async move { d.ui.run(api::get::<Vec<String>>(&path.get_value())).await.unwrap_or_default() });
+    let options = Signal::derive(move || formats.get().unwrap_or_default().into_iter().map(|f| (f.clone(), f.to_uppercase())).collect::<Vec<_>>());
+    let picked = RwSignal::new(String::new());
+    let target = Signal::derive(move || {
+        let first = || options.with(|o| o.first().map(|(key, _)| key.clone())).unwrap_or_default();
+        picked.with(|p| if p.is_empty() { first() } else { p.clone() })
+    });
+    let converting = RwSignal::new(false);
+    let start = move |_| {
+        let body = json!({ "to": target.get_untracked() });
+        converting.set(true);
+        spawn_local(async move {
+            match d.ui.run(api::post::<api::Uploaded>(&path.get_value(), &body)).await {
+                Some(saved) => {
+                    d.ui.notify(format!("Saved as {}", saved.name));
+                    d.files.refetch();
+                    open.set(false);
+                }
+                None => converting.set(false),
+            }
+        });
+    };
+    view! {
+        <Modal open title="Convert" class="overflow-visible!">
+            <p class="text-sm break-all text-muted-foreground">{name.clone()}</p>
+            {move || match formats.get() {
+                None => view! { <div class="flex justify-center py-2"><Spinner /></div> }.into_any(),
+                Some(list) if list.is_empty() => view! { <p class="text-sm">"This file type cannot be converted."</p> }.into_any(),
+                Some(_) => view! {
+                    <div class="flex flex-col gap-2">
+                        <Label>"Convert to"</Label>
+                        <Choice class="w-full" options value=target on_change=Callback::new(move |v: String| picked.set(v)) />
+                    </div>
+                }
+                .into_any(),
+            }}
+            <div class="flex gap-2 justify-end">
+                <Button variant=ButtonVariant::Ghost on:click=move |_| open.set(false)>"Cancel"</Button>
+                <Button attr:disabled=move || converting.get() || target.with(String::is_empty) on:click=start>
+                    {move || if converting.get() { view! { <Spinner /> "Converting..." }.into_any() } else { view! { <FileOutput /> "Convert" }.into_any() }}
+                </Button>
+            </div>
         </Modal>
     }
 }

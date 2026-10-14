@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::auth::User;
+use crate::convert;
 use crate::util::{Res, all, archive_set, bad, err, exec, one, token, uuid};
 use crate::{App, St};
 
@@ -124,6 +125,28 @@ async fn replace_content(app: &App, id: &str, key: &str, mime: &str, size: i64) 
     Ok(())
 }
 
+struct NewFile<'a> {
+    project: Option<&'a str>,
+    folder: Option<&'a str>,
+    name: &'a str,
+    mime: &'a str,
+    size: i64,
+    key: &'a str,
+}
+
+async fn insert(app: &App, user: &User, f: NewFile<'_>) -> Res<String> {
+    let id = uuid();
+    app.db
+        .execute(
+            "INSERT INTO files (id, user_id, project_id, folder_id, name, mime, size, key) \
+             VALUES (?1, ?2, (SELECT id FROM projects WHERE id = ?3 AND user_id = ?2), \
+             (SELECT id FROM folders WHERE id = ?4 AND user_id = ?2), ?5, ?6, ?7, ?8)",
+            params![id.as_str(), user.id.as_str(), f.project, f.folder, f.name, f.mime, f.size, f.key],
+        )
+        .await?;
+    Ok(id)
+}
+
 pub async fn upload(app: St, user: User, Query(q): Query<ListQ>, mut mp: Multipart) -> Res<Json<Vec<Value>>> {
     let folder = q.folder.as_deref();
     let mut saved = Vec::new();
@@ -139,21 +162,62 @@ pub async fn upload(app: St, user: User, Query(q): Query<ListQ>, mut mp: Multipa
             continue;
         }
         let name = if existing.is_some() { free_name(&app, &user, folder, &name).await? } else { name };
-        let id = uuid();
-        app.db
-            .execute(
-                "INSERT INTO files (id, user_id, project_id, folder_id, name, mime, size, key) \
-                 VALUES (?1, ?2, (SELECT id FROM projects WHERE id = ?3 AND user_id = ?2), \
-                 (SELECT id FROM folders WHERE id = ?4 AND user_id = ?2), ?5, ?6, ?7, ?8)",
-                params![id.as_str(), user.id.as_str(), q.project.as_deref(), folder, name.clone(), mime, size, key],
-            )
-            .await?;
+        let id = insert(&app, &user, NewFile { project: q.project.as_deref(), folder, name: &name, mime: &mime, size, key: &key }).await?;
         saved.push(json!({ "id": id, "name": name }));
     }
     if saved.is_empty() {
         return Err(bad("No file in request"));
     }
     Ok(Json(saved))
+}
+
+const CONVERT_LIMIT: i64 = 50 * 1024 * 1024;
+
+#[derive(Deserialize)]
+pub struct ConvertReq {
+    to: String,
+}
+
+#[derive(Deserialize)]
+struct Original {
+    name: String,
+    key: String,
+    size: i64,
+    project_id: Option<String>,
+    folder_id: Option<String>,
+}
+
+fn split_ext(name: &str) -> (&str, &str) {
+    name.rsplit_once('.').filter(|(stem, _)| !stem.is_empty()).unwrap_or((name, ""))
+}
+
+pub async fn formats(app: St, user: User, Path(id): Path<String>) -> Res<Json<Vec<&'static str>>> {
+    let f: Original = one(&app.db, "SELECT name, key, size, project_id, folder_id FROM files WHERE id = ?1 AND user_id = ?2", params![id.as_str(), user.id.as_str()]).await?;
+    Ok(Json(convert::targets(split_ext(&f.name).1)))
+}
+
+pub async fn convert(app: St, user: User, Path(id): Path<String>, Json(r): Json<ConvertReq>) -> Res<Json<Value>> {
+    let f: Original = one(&app.db, "SELECT name, key, size, project_id, folder_id FROM files WHERE id = ?1 AND user_id = ?2", params![id.as_str(), user.id.as_str()]).await?;
+    let (stem, from) = split_ext(&f.name);
+    if !convert::targets(from).contains(&r.to.as_str()) {
+        return Err(bad("This conversion is not supported"));
+    }
+    if f.size > CONVERT_LIMIT {
+        return Err(bad("Files larger than 50 MB cannot be converted"));
+    }
+    let bytes = app.storage.read(&f.key).await?;
+    let (title, source, target) = (stem.to_owned(), from.to_owned(), r.to.clone());
+    let out = tokio::task::spawn_blocking(move || convert::run(bytes, &title, &source, &target))
+        .await?
+        .map_err(|_| err(StatusCode::UNPROCESSABLE_ENTITY, "This file could not be converted"))?;
+    let folder = f.folder_id.as_deref();
+    let name = format!("{stem}.{}", r.to);
+    let name = if taken(&app, &user, folder, &name, "").await?.is_some() { free_name(&app, &user, folder, &name).await? } else { name };
+    let key = token();
+    let size = app.storage.save_bytes(&key, &out).await?;
+    let new = NewFile { project: f.project_id.as_deref(), folder, name: &name, mime: convert::mime(&r.to), size, key: &key };
+    let id = insert(&app, &user, new).await?;
+    Ok(Json(json!({ "id": id, "name": name })))
 }
 
 #[derive(Deserialize)]

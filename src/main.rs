@@ -3,6 +3,7 @@
 mod auth;
 mod board;
 mod calendar;
+mod convert;
 mod dashboard;
 mod export;
 mod files;
@@ -177,6 +178,7 @@ fn api() -> Router<Arc<App>> {
         .route("/api/files/{id}", put(files::update).delete(files::remove))
         .route("/api/files/{id}/action/{action}", post(files::action))
         .route("/api/files/{id}/raw", get(files::raw))
+        .route("/api/files/{id}/convert", get(files::formats).post(files::convert))
         .route("/api/files/{id}/share", post(files::share).delete(files::unshare))
         .route("/api/public/files/{token}", get(files::public_raw))
         .route("/api/folders", get(folders::list).post(folders::create))
