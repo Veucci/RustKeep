@@ -1,13 +1,16 @@
 use axum::Json;
-use axum::extract::Path;
+use axum::extract::{Path, Request};
+use axum::response::Response;
 use libsql::params;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::St;
 use crate::auth::User;
+use crate::files::{Stored, serve};
+use crate::folders::PublicFile;
 use crate::projects::find;
-use crate::util::{Res, all, bad, exec, one, uuid};
+use crate::util::{Res, all, archive_set, bad, exec, one, uuid};
 
 const OWNED: &str = "project_id IN (SELECT id FROM projects WHERE user_id = ?2)";
 const OWNED_TASKS: &str = "(SELECT t.id FROM tasks t JOIN projects p ON p.id = t.project_id WHERE p.user_id = ?2)";
@@ -106,12 +109,13 @@ pub struct Task {
     due: Option<String>,
     created: i64,
     priority: i64,
+    archived: i64,
     subtasks: i64,
     subtasks_done: i64,
 }
 
 const TASK_SELECT: &str = "SELECT t.id, t.column_id, t.project_id, p.name AS project, t.title, t.description, t.due, \
-     t.created, t.priority, \
+     t.created, t.priority, t.archived, \
      (SELECT COUNT(*) FROM subtasks s WHERE s.task_id = t.id) AS subtasks, \
      (SELECT COUNT(*) FROM subtasks s WHERE s.task_id = t.id AND s.done = 1) AS subtasks_done \
      FROM tasks t JOIN projects p ON p.id = t.project_id WHERE p.user_id = ?1";
@@ -202,6 +206,12 @@ pub async fn move_task(app: St, user: User, Path(id): Path<String>, Json(r): Jso
     Ok(Json(json!({ "ok": true })))
 }
 
+pub async fn task_action(app: St, user: User, Path((id, action)): Path<(String, String)>) -> Res<Json<Value>> {
+    let sql = format!("UPDATE tasks SET {} WHERE id = ?1 AND {OWNED}", archive_set(&action)?);
+    exec(&app.db, &sql, params![id.as_str(), user.id.as_str()]).await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
 pub async fn remove_task(app: St, user: User, Path(id): Path<String>) -> Res<Json<Value>> {
     exec(&app.db, &format!("DELETE FROM tasks WHERE id = ?1 AND {OWNED}"), params![id.as_str(), user.id.as_str()]).await?;
     app.db.execute("DELETE FROM subtasks WHERE task_id = ?1", params![id.as_str()]).await?;
@@ -211,6 +221,7 @@ pub async fn remove_task(app: St, user: User, Path(id): Path<String>) -> Res<Jso
 #[derive(Serialize, Deserialize)]
 pub struct Subtask {
     id: String,
+    task_id: String,
     title: String,
     done: i64,
     description: String,
@@ -219,7 +230,7 @@ pub struct Subtask {
 }
 
 pub async fn subtasks(app: St, user: User, Path(id): Path<String>) -> Res<Json<Vec<Subtask>>> {
-    let sql = format!("SELECT id, title, done, description, due, priority FROM subtasks WHERE task_id = ?1 AND task_id IN {OWNED_TASKS} ORDER BY position, created");
+    let sql = format!("SELECT id, task_id, title, done, description, due, priority FROM subtasks WHERE task_id = ?1 AND task_id IN {OWNED_TASKS} ORDER BY position, created");
     Ok(Json(all(&app.db, &sql, params![id.as_str(), user.id.as_str()]).await?))
 }
 
@@ -264,4 +275,49 @@ pub async fn remove_subtask(app: St, user: User, Path(id): Path<String>) -> Res<
     let sql = format!("DELETE FROM subtasks WHERE id = ?1 AND task_id IN {OWNED_TASKS}");
     exec(&app.db, &sql, params![id.as_str(), user.id.as_str()]).await?;
     Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+struct SharedProject {
+    id: String,
+    user_id: String,
+    name: String,
+    description: String,
+}
+
+const SHARED_PROJECT: &str = "SELECT id, user_id, name, description FROM projects \
+     WHERE share_token = ?1 AND (share_expires IS NULL OR share_expires > unixepoch())";
+
+pub async fn public_board(app: St, Path(t): Path<String>) -> Res<Json<Value>> {
+    let p: SharedProject = one(&app.db, SHARED_PROJECT, params![t.as_str()]).await?;
+    let owner = || params![p.user_id.as_str(), p.id.as_str()];
+    let columns: Vec<Column> = all(&app.db, &format!("{COLUMN_SELECT} AND p.id = ?2 ORDER BY c.position"), owner()).await?;
+    let sql = format!("{TASK_SELECT} AND p.id = ?2 AND t.archived = 0 ORDER BY t.position, t.created");
+    let mut tasks: Vec<Task> = all(&app.db, &sql, owner()).await?;
+    let mut subtasks: Vec<Subtask> = all(
+        &app.db,
+        "SELECT s.id, s.task_id, s.title, s.done, s.description, s.due, s.priority FROM subtasks s \
+         JOIN tasks t ON t.id = s.task_id WHERE t.project_id = ?1 AND t.archived = 0 ORDER BY s.position, s.created",
+        params![p.id.as_str()],
+    )
+    .await?;
+    let files: Vec<PublicFile> = all(
+        &app.db,
+        "SELECT id, name, mime, size, created, folder_id FROM files WHERE user_id = ?1 AND project_id = ?2 AND archived = 0 ORDER BY name",
+        owner(),
+    )
+    .await?;
+    let public = format!("/api/public/projects/{t}/files/");
+    for d in tasks.iter_mut().map(|x| &mut x.description).chain(subtasks.iter_mut().map(|x| &mut x.description)) {
+        *d = d.replace("/api/files/", &public);
+    }
+    Ok(Json(json!({
+        "name": p.name, "description": p.description, "columns": columns, "tasks": tasks, "subtasks": subtasks, "files": files,
+    })))
+}
+
+pub async fn public_raw(app: St, Path((t, id)): Path<(String, String)>, req: Request) -> Res<Response> {
+    let sql = format!("SELECT f.name, f.mime, f.key FROM files f JOIN ({SHARED_PROJECT}) p ON p.id = f.project_id AND p.user_id = f.user_id WHERE f.id = ?2");
+    let f: Stored = one(&app.db, &sql, params![t.as_str(), id.as_str()]).await?;
+    serve(&app, f, req).await
 }

@@ -63,6 +63,7 @@ fn App() -> impl IntoView {
                 <Route path=path!("/register") view=pages::auth::Register />
                 <Route path=path!("/s/:token") view=pages::shared::SharedNote />
                 <Route path=path!("/d/:token") view=pages::shared_folder::SharedFolder />
+                <Route path=path!("/b/:token") view=pages::shared_board::SharedBoard />
                 <ParentRoute path=path!("") view=Layout>
                     <Route path=path!("") view=pages::dashboard::Dashboard />
                     <Route path=path!("notes") view=|| view! { <pages::notes::NotesList view=View::Active /> } />

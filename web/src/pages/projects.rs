@@ -3,7 +3,7 @@ use std::collections::HashSet;
 
 use icons::{
     Archive, ArchiveRestore, ArrowLeft, Calendar, ChevronLeft, ChevronRight, Download, Flag, FolderKanban, ListChecks,
-    Pencil, Plus, SquareKanban, Trash2,
+    Pencil, Plus, Share2, SquareKanban, Trash2,
 };
 use leptos::ev::SubmitEvent;
 use leptos::html;
@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use web_sys::DragEvent;
 
-use crate::api::{self, AutoSave};
+use crate::api::{self, AutoSave, SaveState};
 use crate::id::Id;
 use crate::components::ui::badge::{Badge, BadgeVariant};
 use crate::components::ui::button::{Button, ButtonSize, ButtonVariant};
@@ -32,11 +32,11 @@ use crate::components::ui::progress::Progress;
 use crate::components::ui::skeleton::Skeleton;
 use crate::components::ui::textarea::Textarea;
 use crate::md;
-use crate::pages::editor::RichEditor;
+use crate::pages::editor::{RichEditor, SaveBadge};
 use crate::pages::files::FileManager;
 use crate::pages::notes::{NotesList, View};
 use crate::widgets::{
-    Choice, Modal, Options, PageHeader, SearchBox, Segmented, SortSelect, Toolbar, Ui, days_until, due_label,
+    Choice, Modal, Options, PageHeader, SearchBox, Segmented, ShareDialog, SortSelect, Toolbar, Ui, days_until, due_label,
     fmt_date, focus_if_new, has, owned, query_state, use_ui,
 };
 
@@ -50,6 +50,7 @@ const TABS: Options = &[("board", "Board"), ("notes", "Notes"), ("files", "Files
 const DUE: Options = &[("all", "All tasks"), ("overdue", "Overdue"), ("soon", "Due in 7 days"), ("nodate", "No date")];
 const ORDER: Options = &[("manual", "Manual order"), ("due", "Due date"), ("priority", "Priority"), ("newest", "Newest")];
 const PROJECT_FILTER: Options = &[("only", "Show selected"), ("hide", "Hide selected")];
+const TASK_STATE: Options = &[("active", "Active"), ("archived", "Archived")];
 const PAGE: usize = 20;
 
 #[derive(Clone, Deserialize)]
@@ -64,6 +65,8 @@ pub struct ProjectItem {
     pub created: i64,
     #[serde(default)]
     pub archived: i64,
+    #[serde(default)]
+    pub share_token: Option<String>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -93,6 +96,8 @@ struct Task {
     subtasks: i64,
     #[serde(default, skip_serializing)]
     subtasks_done: i64,
+    #[serde(default, skip_serializing)]
+    archived: i64,
 }
 
 #[derive(Clone, Deserialize)]
@@ -304,6 +309,8 @@ fn ProjectView(project: ProjectItem) -> impl IntoView {
     let description = RwSignal::new(project.description);
     let status = RwSignal::new(project.status);
     let archived = RwSignal::new(project.archived == 1);
+    let share_token = RwSignal::new(project.share_token);
+    let share_open = RwSignal::new(false);
     let (tab, set_tab) = query_state("tab", "board");
     Effect::new(move |_| ui.set_crumb(name.get()));
     let save = move || {
@@ -366,6 +373,10 @@ fn ProjectView(project: ProjectItem) -> impl IntoView {
                         save();
                     })
                 />
+                <Button variant=ButtonVariant::Outline attr:title="Share" on:click=move |_| share_open.set(true)>
+                    <Share2 />
+                    <span class="hidden sm:inline">"Share"</span>
+                </Button>
                 <Button variant=ButtonVariant::Outline attr:title="Export Excel" attr:download="" href=api::url(&format!("/api/projects/{id}/export"))>
                     <Download />
                     <span class="hidden sm:inline">"Export Excel"</span>
@@ -385,6 +396,7 @@ fn ProjectView(project: ProjectItem) -> impl IntoView {
                 _ => view! { <Board project=id /> }.into_any(),
             }}
         </div>
+        <ShareDialog open=share_open api_path=format!("/api/projects/{id}/share") link_prefix="/b/" token=share_token />
     }
 }
 
@@ -418,10 +430,6 @@ impl BoardCtx {
                 self.columns.refetch();
             }
         });
-    }
-
-    fn save_task(self, t: Task) {
-        self.call(async move { api::put::<Value>(&format!("/api/tasks/{}", t.id), &t).await }, false);
     }
 
     fn end_drag(self) {
@@ -477,6 +485,8 @@ struct TaskForm {
     column: RwSignal<Id>,
     due: RwSignal<String>,
     priority: RwSignal<i64>,
+    archived: RwSignal<bool>,
+    saved: StoredValue<Value>,
 }
 
 impl TaskForm {
@@ -490,6 +500,8 @@ impl TaskForm {
             column: RwSignal::new(Id::default()),
             due: RwSignal::new(String::new()),
             priority: RwSignal::new(0),
+            archived: RwSignal::new(false),
+            saved: StoredValue::new(Value::Null),
         }
     }
 
@@ -501,6 +513,8 @@ impl TaskForm {
         self.column.set(t.column_id);
         self.due.set(t.due.unwrap_or_default());
         self.priority.set(t.priority);
+        self.archived.set(t.archived == 1);
+        self.saved.set_value(self.payload());
         self.open.set(true);
     }
 
@@ -516,6 +530,10 @@ impl TaskForm {
             ..Default::default()
         }
     }
+
+    fn payload(&self) -> Value {
+        serde_json::to_value(self.task()).unwrap_or_default()
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -525,6 +543,7 @@ struct Filters {
     project_mode: RwSignal<String>,
     due: Signal<String>,
     order: Signal<String>,
+    state: Signal<String>,
 }
 
 impl Filters {
@@ -538,7 +557,8 @@ impl Filters {
         };
         let only = self.project_mode.get() == "only";
         let project_ok = self.projects.with(|p| p.is_empty() || p.contains(t.project_id.as_str()) == only);
-        due_ok && project_ok && (has(&t.title, &self.q.get()) || has(&t.description, &self.q.get()))
+        let state_ok = (t.archived == 1) == (self.state.get() == "archived");
+        state_ok && due_ok && project_ok && (has(&t.title, &self.q.get()) || has(&t.description, &self.q.get()))
     }
 
     fn apply(&self, mut list: Vec<Task>) -> Vec<Task> {
@@ -583,18 +603,21 @@ fn Board(#[prop(optional)] project: Option<Id>) -> impl IntoView {
     });
     let (due, set_due) = query_state("due", "all");
     let (order, set_order) = query_state("order", "manual");
+    let (state, set_state) = query_state("tasks", "active");
     let filters = Filters {
         q: RwSignal::new(String::new()),
         projects: RwSignal::new(HashSet::new()),
         project_mode: RwSignal::new("only".into()),
         due,
         order,
+        state,
     };
 
     view! {
         <Toolbar>
             <div class="flex flex-wrap flex-1 gap-2 items-center min-w-0 max-w-full basis-full sm:basis-0">
                 <SearchBox value=filters.q placeholder="Search tasks  /" />
+                <Segmented options=TASK_STATE value=state on_change=set_state />
                 <Segmented options=DUE value=due on_change=set_due />
                 <Show when=move || project.is_none()>
                     <ProjectFilter filters />
@@ -837,7 +860,7 @@ fn BoardColumn(column: Column, ctx: BoardCtx, filters: Filters) -> impl IntoView
                 </Show>
                 <div class="h-1 rounded-full transition-all shrink-0 bg-primary" class=("opacity-0", move || !at_end()) />
             </div>
-            <form on:submit=add on:dragover=move |_| ctx.over_task.set(None) class=("hidden", ctx.project.is_none())>
+            <form on:submit=add on:dragover=move |_| ctx.over_task.set(None) class=("hidden", move || ctx.project.is_none() || filters.state.get() == "archived")>
                 <Input
                     class="bg-transparent border-transparent shadow-none hover:bg-background focus:bg-background dark:bg-transparent"
                     placeholder="+ Add task"
@@ -848,7 +871,7 @@ fn BoardColumn(column: Column, ctx: BoardCtx, filters: Filters) -> impl IntoView
     }
 }
 
-fn priority_class(p: i64) -> &'static str {
+pub fn priority_class(p: i64) -> &'static str {
     match p {
         3 => "bg-destructive/10 text-destructive",
         2 => "bg-warning/20 text-foreground",
@@ -856,12 +879,12 @@ fn priority_class(p: i64) -> &'static str {
     }
 }
 
-fn priority_label(p: i64) -> &'static str {
+pub fn priority_label(p: i64) -> &'static str {
     PRIORITIES.iter().find(|(k, _)| *k == p).map_or("", |(_, l)| *l)
 }
 
 #[component]
-fn DueChip(due: String, done: bool) -> impl IntoView {
+pub fn DueChip(due: String, done: bool) -> impl IntoView {
     let days = days_until(&due);
     let class = match days {
         _ if done => "bg-muted text-muted-foreground",
@@ -966,16 +989,32 @@ fn TaskModal(ctx: BoardCtx) -> impl IntoView {
             ctx.call(async move { api::del(&format!("/api/tasks/{id}")).await }, false);
         });
     };
-    let complete = move |_| {
-        let Some(last) = ctx.project_columns(form.project.get_untracked()).last().map(|c| c.id) else { return };
-        form.column.set(last);
+    let archive = move |_| {
+        let id = form.id.get_untracked();
+        let action = if form.archived.get_untracked() { "unarchive" } else { "archive" };
         form.open.set(false);
-        ctx.save_task(form.task());
+        ctx.call(async move { api::post::<Value>(&format!("/api/tasks/{id}/action/{action}"), &()).await }, false);
     };
-    let save = move |_| {
-        form.open.set(false);
-        ctx.save_task(form.task());
-    };
+    let saver = AutoSave::new();
+    Effect::new(move |_| {
+        form.title.track();
+        form.description.track();
+        form.due.track();
+        form.priority.track();
+        form.column.track();
+        let body = form.payload();
+        if !form.open.get_untracked() || form.saved.with_value(|s| *s == body) {
+            return;
+        }
+        form.saved.set_value(body.clone());
+        saver.send(format!("/api/tasks/{}", form.id.get_untracked()), body);
+    });
+    Effect::new(move |_| {
+        if !form.open.get() && saver.state.get() == SaveState::Saved {
+            saver.state.set(SaveState::Idle);
+            ctx.source.refetch();
+        }
+    });
 
     view! {
         <Modal open=form.open title="Edit task" class="max-w-[min(72rem,calc(100%-2rem))]">
@@ -985,6 +1024,7 @@ fn TaskModal(ctx: BoardCtx) -> impl IntoView {
                     <Subtasks ctx />
                 </div>
                 <aside class="flex flex-col gap-4">
+                    <SaveBadge state=saver.state />
                     {move || cover().map(|src| view! { <img src=src alt="" class="object-cover w-full h-40 rounded-lg border bg-muted" /> })}
                     <div class="flex flex-col gap-2">
                         <Label>"Due date"</Label>
@@ -1010,18 +1050,15 @@ fn TaskModal(ctx: BoardCtx) -> impl IntoView {
                             on_change=Callback::new(move |picked: String| form.column.set(picked.parse().unwrap_or_default()))
                         />
                     </div>
-                    <div class="flex gap-2 items-center pt-2 lg:mt-auto">
-                        <Button
-                            variant=ButtonVariant::Destructive
-                            size=ButtonSize::Icon
-                            attr:title="Delete task"
-                            attr:aria-label="Delete task"
-                            on:click=remove
-                        >
-                            <Trash2 />
+                    <div class="grid grid-cols-2 gap-2 pt-2 lg:mt-auto">
+                        <Button class="w-full" variant=ButtonVariant::Outline on:click=archive>
+                            {move || if form.archived.get() { view! { <ArchiveRestore /> }.into_any() } else { view! { <Archive /> }.into_any() }}
+                            {move || if form.archived.get() { "Unarchive" } else { "Archive" }}
                         </Button>
-                        <Button class="flex-1" variant=ButtonVariant::Outline on:click=complete>"Mark done"</Button>
-                        <Button class="flex-1" on:click=save>"Save"</Button>
+                        <Button class="w-full" variant=ButtonVariant::Destructive on:click=remove>
+                            <Trash2 />
+                            "Delete"
+                        </Button>
                     </div>
                 </aside>
             </div>
@@ -1058,6 +1095,25 @@ fn Subtasks(ctx: BoardCtx) -> impl IntoView {
         let id = form.id.get_untracked();
         sync_subtasks(ctx, list, async move { api::post::<Value>(&format!("/api/tasks/{id}/subtasks"), &body).await });
     };
+    let paste = move |ev: leptos::ev::ClipboardEvent| {
+        let text = ev.clipboard_data().and_then(|d| d.get_data("text").ok()).unwrap_or_default();
+        let lines: Vec<String> = text.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_owned).collect();
+        if lines.len() < 2 {
+            return;
+        }
+        ev.prevent_default();
+        let id = form.id.get_untracked();
+        let path = format!("/api/tasks/{id}/subtasks");
+        spawn_local(async move {
+            for line in lines {
+                if ctx.ui.run(api::post::<Value>(&path, &json!({ "title": line }))).await.is_none() {
+                    break;
+                }
+            }
+            list.refetch();
+            ctx.source.refetch();
+        });
+    };
 
     view! {
         <div class="flex flex-col gap-2">
@@ -1074,7 +1130,7 @@ fn Subtasks(ctx: BoardCtx) -> impl IntoView {
                 <SubtaskRow subtask ctx list />
             </For>
             <form on:submit=add>
-                <Input placeholder="+ Add subtask" bind_value=title />
+                <Input placeholder="+ Add subtask" bind_value=title on:paste=paste />
             </form>
         </div>
     }

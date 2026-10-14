@@ -9,9 +9,10 @@ use serde_json::{Value, json};
 
 use crate::St;
 use crate::auth::User;
+use crate::files::{ShareReq, clear_share, set_share};
 use crate::util::{Res, all, archive_set, bad, exec, one, uuid};
 
-pub const PROJECT_SELECT: &str = "SELECT p.id, p.name, p.description, p.status, p.created, p.archived, \
+pub const PROJECT_SELECT: &str = "SELECT p.id, p.name, p.description, p.status, p.created, p.archived, p.share_token, p.share_expires, \
      (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id) AS tasks, \
      (SELECT COUNT(*) FROM tasks t WHERE t.column_id = \
         (SELECT c.id FROM board_columns c WHERE c.project_id = p.id ORDER BY c.position DESC LIMIT 1)) AS done \
@@ -27,6 +28,8 @@ pub struct Project {
     status: String,
     created: i64,
     archived: i64,
+    share_token: Option<String>,
+    share_expires: Option<i64>,
     tasks: i64,
     done: i64,
 }
@@ -90,6 +93,14 @@ pub async fn action(app: St, user: User, Path((id, action)): Path<(String, Strin
     let sql = format!("UPDATE projects SET {} WHERE id = ?1 AND user_id = ?2", archive_set(&action)?);
     exec(&app.db, &sql, params![id.as_str(), user.id.as_str()]).await?;
     Ok(Json(json!({ "ok": true })))
+}
+
+pub async fn share(app: St, user: User, Path(id): Path<String>, Json(r): Json<ShareReq>) -> Res<Json<Value>> {
+    set_share(&app, "projects", &id, &user, r.expires).await
+}
+
+pub async fn unshare(app: St, user: User, Path(id): Path<String>) -> Res<Json<Value>> {
+    clear_share(&app, "projects", &id, &user).await
 }
 
 pub async fn remove(app: St, user: User, Path(id): Path<String>) -> Res<Json<Value>> {

@@ -68,14 +68,14 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL DEFAULT 'active', created INTEGER NOT NULL DEFAULT (unixepoch()),
-  archived INTEGER NOT NULL DEFAULT 0);
+  archived INTEGER NOT NULL DEFAULT 0, share_token TEXT UNIQUE, share_expires INTEGER);
 CREATE TABLE IF NOT EXISTS board_columns (
   id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), name TEXT NOT NULL, position INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
   column_id TEXT NOT NULL REFERENCES board_columns(id), title TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '', due TEXT, created INTEGER NOT NULL DEFAULT (unixepoch()),
-  position INTEGER NOT NULL DEFAULT 0, priority INTEGER NOT NULL DEFAULT 0);
+  position INTEGER NOT NULL DEFAULT 0, priority INTEGER NOT NULL DEFAULT 0, archived INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS subtasks (
   id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id), title TEXT NOT NULL,
   done INTEGER NOT NULL DEFAULT 0, position INTEGER NOT NULL DEFAULT 0, created INTEGER NOT NULL DEFAULT (unixepoch()),
@@ -190,6 +190,9 @@ fn api() -> Router<Arc<App>> {
         .route("/api/projects/{id}", get(projects::get).put(projects::update).delete(projects::remove))
         .route("/api/projects/{id}/export", get(projects::export))
         .route("/api/projects/{id}/action/{action}", post(projects::action))
+        .route("/api/projects/{id}/share", post(projects::share).delete(projects::unshare))
+        .route("/api/public/projects/{token}", get(board::public_board))
+        .route("/api/public/projects/{token}/files/{id}/raw", get(board::public_raw))
         .route("/api/projects/{id}/columns", get(board::columns).post(board::create_column))
         .route("/api/projects/{id}/tasks", get(board::tasks).post(board::create_task))
         .route("/api/board/columns", get(board::overview_columns))
@@ -198,6 +201,7 @@ fn api() -> Router<Arc<App>> {
         .route("/api/columns/{id}/move/{dir}", post(board::move_column))
         .route("/api/tasks/{id}", put(board::update_task).delete(board::remove_task))
         .route("/api/tasks/{id}/move", post(board::move_task))
+        .route("/api/tasks/{id}/action/{action}", post(board::task_action))
         .route("/api/tasks/{id}/subtasks", get(board::subtasks).post(board::create_subtask))
         .route("/api/subtasks/{id}", put(board::update_subtask).delete(board::remove_subtask))
         .route("/api/dashboard", get(dashboard::get))

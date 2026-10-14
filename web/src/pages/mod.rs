@@ -9,5 +9,6 @@ pub mod notes;
 pub mod projects;
 pub mod reminders;
 pub mod shared;
+pub mod shared_board;
 pub mod shared_folder;
 pub mod vault;

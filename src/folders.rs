@@ -106,7 +106,7 @@ struct PublicFolder {
 }
 
 #[derive(Serialize, Deserialize)]
-struct PublicFile {
+pub struct PublicFile {
     id: String,
     name: String,
     mime: String,
