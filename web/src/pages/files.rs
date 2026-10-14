@@ -9,7 +9,7 @@ use leptos::html;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 use wasm_bindgen::JsValue;
 use web_sys::{DragEvent, File, MouseEvent};
 
@@ -202,6 +202,7 @@ enum Dialog {
     Rename(String),
     Move(Vec<String>),
     Share(String),
+    Conflict(Vec<File>, Option<String>, Vec<String>),
 }
 
 #[derive(Clone, Copy)]
@@ -314,9 +315,21 @@ impl Drive {
         if list.is_empty() {
             return;
         }
+        let body = json!({ "folder": folder, "names": list.iter().map(File::name).collect::<Vec<_>>() });
+        spawn_local(async move {
+            let Some(clash) = self.ui.run(api::post::<Vec<String>>("/api/files/conflicts", &body)).await else { return };
+            if clash.is_empty() {
+                self.send(list, folder, false);
+            } else {
+                self.dialog.set(Some(Dialog::Conflict(list, folder, clash)));
+            }
+        });
+    }
+
+    fn send(self, list: Vec<File>, folder: Option<String>, replace: bool) {
         self.busy.set(true);
         spawn_local(async move {
-            if let Some(saved) = self.ui.run(api::upload(list, self.project, folder)).await {
+            if let Some(saved) = self.ui.run(api::upload(list, self.project, folder, replace)).await {
                 self.ui.notify(format!("Uploaded {} file(s)", saved.len()));
                 self.files.refetch();
             }
@@ -1043,6 +1056,7 @@ fn Dialogs() -> impl IntoView {
                 }
                 Dialog::Move(ids) => view! { <MoveDialog open ids /> }.into_any(),
                 Dialog::Share(id) => share_dialog(d, open, &id),
+                Dialog::Conflict(files, folder, names) => view! { <ConflictDialog open files folder names /> }.into_any(),
             }
         })}
     }
@@ -1090,6 +1104,31 @@ fn NameDialog(open: RwSignal<bool>, title: &'static str, initial: String, on_sub
                     <Button>"Save"</Button>
                 </div>
             </form>
+        </Modal>
+    }
+}
+
+#[component]
+fn ConflictDialog(open: RwSignal<bool>, files: Vec<File>, folder: Option<String>, names: Vec<String>) -> impl IntoView {
+    let d = use_drive();
+    let pending = StoredValue::new_local((files, folder));
+    let message = match names.as_slice() {
+        [one] => format!("\"{one}\" already exists in this location."),
+        many => format!("{} items already exist in this location.", many.len()),
+    };
+    let finish = move |replace: bool| {
+        let (files, folder) = pending.get_value();
+        d.send(files, folder, replace);
+        open.set(false);
+    };
+    view! {
+        <Modal open title="Upload options">
+            <p class="text-sm text-muted-foreground">{message.clone()}" Replace the existing files or keep both?"</p>
+            <div class="flex flex-wrap gap-2 justify-end">
+                <Button variant=ButtonVariant::Ghost on:click=move |_| open.set(false)>"Cancel"</Button>
+                <Button variant=ButtonVariant::Outline on:click=move |_| finish(false)>"Keep both"</Button>
+                <Button on:click=move |_| finish(true)>"Replace"</Button>
+            </div>
         </Modal>
     }
 }

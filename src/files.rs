@@ -1,26 +1,32 @@
-use std::path::PathBuf;
-
 use axum::Json;
-use axum::body::Body;
-use axum::extract::multipart::Field;
 use axum::extract::{Multipart, Path, Query, Request};
-use axum::http::{HeaderValue, header};
+use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::Response;
 use libsql::params;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tokio::io::AsyncWriteExt;
-use tower::ServiceExt;
-use tower_http::services::ServeFile;
 
 use crate::auth::User;
-use crate::util::{Res, all, archive_set, bad, exec, one, token, uuid};
+use crate::util::{Res, all, archive_set, bad, err, exec, one, token, uuid};
 use crate::{App, St};
 
 #[derive(Deserialize)]
 pub struct ListQ {
     project: Option<String>,
     folder: Option<String>,
+    #[serde(default)]
+    replace: bool,
+}
+
+#[derive(Deserialize)]
+pub struct ConflictQ {
+    folder: Option<String>,
+    names: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct Key {
+    key: String,
 }
 
 #[derive(Deserialize)]
@@ -66,42 +72,80 @@ pub async fn list(app: St, user: User, Query(q): Query<ListQ>) -> Res<Json<Vec<F
     Ok(Json(rows))
 }
 
-pub fn path_of(app: &App, key: &str) -> PathBuf {
-    app.cfg.data_dir.join("files").join(key)
+async fn taken(app: &App, user: &User, folder: Option<&str>, name: &str, except: &str) -> Res<Option<String>> {
+    let mut rows = app
+        .db
+        .query(
+            "SELECT id FROM files WHERE user_id = ?1 AND name = ?2 AND id <> ?4 \
+             AND folder_id IS (SELECT id FROM folders WHERE id = ?3 AND user_id = ?1) LIMIT 1",
+            params![user.id.as_str(), name, folder, except],
+        )
+        .await?;
+    Ok(rows.next().await?.map(|r| r.get::<String>(0)).transpose()?)
 }
 
-async fn write_field(field: &mut Field<'_>, path: &PathBuf) -> Res<i64> {
-    let mut f = tokio::fs::File::create(path).await?;
-    let mut size = 0;
-    while let Some(chunk) = field.chunk().await? {
-        size += chunk.len() as i64;
-        f.write_all(&chunk).await?;
+fn numbered(name: &str, n: u32) -> String {
+    match name.rfind('.') {
+        Some(i) if i > 0 => format!("{} ({n}){}", &name[..i], &name[i..]),
+        _ => format!("{name} ({n})"),
     }
-    f.flush().await?;
-    Ok(size)
+}
+
+async fn free_name(app: &App, user: &User, folder: Option<&str>, name: &str) -> Res<String> {
+    let mut n = 1;
+    loop {
+        let candidate = numbered(name, n);
+        if taken(app, user, folder, &candidate, "").await?.is_none() {
+            return Ok(candidate);
+        }
+        n += 1;
+    }
+}
+
+pub async fn conflicts(app: St, user: User, Json(r): Json<ConflictQ>) -> Res<Json<Vec<String>>> {
+    let mut found = Vec::new();
+    for name in r.names {
+        if taken(&app, &user, r.folder.as_deref(), &name, "").await?.is_some() {
+            found.push(name);
+        }
+    }
+    Ok(Json(found))
+}
+
+async fn replace_content(app: &App, id: &str, key: &str, mime: &str, size: i64) -> Res<()> {
+    let old: Key = one(&app.db, "SELECT key FROM files WHERE id = ?1", params![id]).await?;
+    exec(
+        &app.db,
+        "UPDATE files SET key = ?1, mime = ?2, size = ?3, created = unixepoch(), archived = 0 WHERE id = ?4",
+        params![key, mime, size, id],
+    )
+    .await?;
+    app.storage.remove(&old.key).await;
+    Ok(())
 }
 
 pub async fn upload(app: St, user: User, Query(q): Query<ListQ>, mut mp: Multipart) -> Res<Json<Vec<Value>>> {
+    let folder = q.folder.as_deref();
     let mut saved = Vec::new();
     while let Some(mut field) = mp.next_field().await? {
         let Some(name) = field.file_name().map(str::to_owned) else { continue };
         let mime = field.content_type().unwrap_or("application/octet-stream").to_owned();
         let key = token();
-        let path = path_of(&app, &key);
-        let size = match write_field(&mut field, &path).await {
-            Ok(s) => s,
-            Err(e) => {
-                let _ = tokio::fs::remove_file(&path).await;
-                return Err(e);
-            }
-        };
+        let size = app.storage.save(&key, &mut field).await?;
+        let existing = taken(&app, &user, folder, &name, "").await?;
+        if let Some(id) = existing.as_deref().filter(|_| q.replace) {
+            replace_content(&app, id, &key, &mime, size).await?;
+            saved.push(json!({ "id": id, "name": name }));
+            continue;
+        }
+        let name = if existing.is_some() { free_name(&app, &user, folder, &name).await? } else { name };
         let id = uuid();
         app.db
             .execute(
                 "INSERT INTO files (id, user_id, project_id, folder_id, name, mime, size, key) \
                  VALUES (?1, ?2, (SELECT id FROM projects WHERE id = ?3 AND user_id = ?2), \
                  (SELECT id FROM folders WHERE id = ?4 AND user_id = ?2), ?5, ?6, ?7, ?8)",
-                params![id.as_str(), user.id.as_str(), q.project.as_deref(), q.folder.as_deref(), name.clone(), mime, size, key],
+                params![id.as_str(), user.id.as_str(), q.project.as_deref(), folder, name.clone(), mime, size, key],
             )
             .await?;
         saved.push(json!({ "id": id, "name": name }));
@@ -144,7 +188,7 @@ fn inert(mime: &str) -> bool {
 }
 
 pub async fn serve(app: &App, f: Stored, req: Request) -> Res<Response> {
-    let mut res = ServeFile::new(path_of(app, &f.key)).oneshot(req).await?;
+    let mut res = app.storage.serve(&f.key, req).await?;
     let h = res.headers_mut();
     let mime = HeaderValue::from_str(&f.mime).unwrap_or(HeaderValue::from_static("application/octet-stream"));
     h.insert(header::CONTENT_TYPE, mime);
@@ -155,7 +199,7 @@ pub async fn serve(app: &App, f: Stored, req: Request) -> Res<Response> {
         h.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static("sandbox"));
     }
     h.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
-    Ok(res.map(Body::new))
+    Ok(res)
 }
 
 pub async fn raw(app: St, user: User, Path(id): Path<String>, req: Request) -> Res<Response> {
@@ -174,6 +218,9 @@ pub async fn public_raw(app: St, Path(t): Path<String>, req: Request) -> Res<Res
 }
 
 pub async fn update(app: St, user: User, Path(id): Path<String>, Json(r): Json<Edit>) -> Res<Json<Value>> {
+    if taken(&app, &user, r.parent.as_deref(), r.clean_name()?, &id).await?.is_some() {
+        return Err(err(StatusCode::CONFLICT, "A file with this name already exists in this folder"));
+    }
     exec(
         &app.db,
         "UPDATE files SET name = ?1, starred = ?2, folder_id = (SELECT id FROM folders WHERE id = ?3 AND user_id = ?5) \
@@ -193,7 +240,7 @@ pub async fn action(app: St, user: User, Path((id, action)): Path<(String, Strin
 pub async fn remove(app: St, user: User, Path(id): Path<String>) -> Res<Json<Value>> {
     let f: Stored = one(&app.db, "SELECT name, mime, key FROM files WHERE id = ?1 AND user_id = ?2", params![id.as_str(), user.id.as_str()]).await?;
     exec(&app.db, "DELETE FROM files WHERE id = ?1", params![id.as_str()]).await?;
-    let _ = tokio::fs::remove_file(path_of(&app, &f.key)).await;
+    app.storage.remove(&f.key).await;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -221,4 +268,17 @@ pub async fn share(app: St, user: User, Path(id): Path<String>, Json(r): Json<Sh
 
 pub async fn unshare(app: St, user: User, Path(id): Path<String>) -> Res<Json<Value>> {
     clear_share(&app, "files", &id, &user).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::numbered;
+
+    #[test]
+    fn numbers_duplicate_names() {
+        assert_eq!(numbered("report.pdf", 1), "report (1).pdf");
+        assert_eq!(numbered("archive.tar.gz", 2), "archive.tar (2).gz");
+        assert_eq!(numbered(".env", 1), ".env (1)");
+        assert_eq!(numbered("README", 3), "README (3)");
+    }
 }

@@ -12,6 +12,7 @@ mod notes;
 mod projects;
 mod reminders;
 mod signup;
+mod storage;
 mod templates;
 mod util;
 mod vault;
@@ -41,6 +42,7 @@ pub struct App {
     pub db: libsql::Connection,
     pub cfg: Config,
     pub crypto: util::Crypto,
+    pub storage: storage::Storage,
     pub login_attempts: Mutex<HashMap<String, (u32, i64)>>,
     _database: libsql::Database,
 }
@@ -171,6 +173,7 @@ fn api() -> Router<Arc<App>> {
         .route("/api/notes/{id}/share", post(notes::share).delete(notes::unshare))
         .route("/api/public/notes/{token}", get(notes::public_get).put(notes::public_update))
         .route("/api/files", get(files::list).post(files::upload).layer(DefaultBodyLimit::disable()))
+        .route("/api/files/conflicts", post(files::conflicts))
         .route("/api/files/{id}", put(files::update).delete(files::remove))
         .route("/api/files/{id}/action/{action}", post(files::action))
         .route("/api/files/{id}/raw", get(files::raw))
@@ -256,7 +259,8 @@ async fn main() {
     let port = env("PORT").unwrap_or_else(|| "8080".into());
     let base = cfg.base.clone();
     let crypto = util::Crypto::new(&secret_key(&cfg.data_dir));
-    let app = Arc::new(App { db, crypto, cfg, login_attempts: Mutex::default(), _database: database });
+    let storage = storage::Storage::new(cfg.data_dir.join("files"));
+    let app = Arc::new(App { db, crypto, storage, cfg, login_attempts: Mutex::default(), _database: database });
     tokio::spawn(reminders::run(app.clone()));
 
     let routes = api().route("/", get(page.clone())).fallback_service(spa).with_state(app);

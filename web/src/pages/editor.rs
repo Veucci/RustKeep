@@ -417,7 +417,7 @@ pub fn RichEditor(
     let upload_files = move |files: Vec<File>| {
         let project = upload_project.and_then(|p| p.get_untracked());
         spawn_local(async move {
-            let Some(uploaded) = ui.run(api::upload(files, project, None)).await else { return };
+            let Some(uploaded) = ui.run(api::upload(files, project, None, false)).await else { return };
             insert(uploaded.iter().map(file_html).collect());
         });
     };

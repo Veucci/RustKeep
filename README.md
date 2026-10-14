@@ -4,7 +4,7 @@
 
 Self-hosted notes, files, API key vault, reminders and lightweight project boards.
 
-- `./` - server: axum + libSQL (local SQLite file or Turso), single-threaded tokio runtime.
+- `./` - server: axum + libSQL (local SQLite file or Turso), single-threaded tokio runtime. Uploaded files are stored on local disk by default, or optionally in Amazon S3 or any S3 compatible storage such as Cloudflare R2 (see [Configuration](#configuration)).
 - `web/` - client: Leptos CSR (nightly) with [rust-ui](https://github.com/rust-ui/ui) components and Tailwind v4.
 
 ## Screenshots
@@ -94,6 +94,13 @@ Copy `.env.example` to `.env`. The server loads `.env` from the working director
 | `VERIFY_EMAIL` | `example@efeozkan.com.tr` | Receives new-user approval requests |
 | `GOOGLE_CLIENT_ID` | empty | OAuth client for Google Calendar sync; leave empty to hide the integration |
 | `GOOGLE_CLIENT_SECRET` | empty | Secret of the same OAuth client |
+| `S3_BUCKET` | empty | Store uploads in this S3 bucket instead of `DATA_DIR/files` |
+| `S3_ENDPOINT` | AWS | S3 compatible endpoint, e.g. `https://<account_id>.r2.cloudflarestorage.com` for Cloudflare R2 |
+| `S3_REGION` | `us-east-1` | Bucket region (`auto` for R2) |
+| `S3_ACCESS_KEY_ID` | empty | Access key (required with `S3_BUCKET`) |
+| `S3_SECRET_ACCESS_KEY` | empty | Secret key (required with `S3_BUCKET`) |
+
+Files uploaded before `S3_BUCKET` was set stay in `DATA_DIR/files` and are still served from there.
 
 For Google Calendar, create an OAuth client of type "Web application" in Google Cloud, enable the Google Calendar API and add `PUBLIC_URL` + `BASE_PATH` + `/api/google/callback` as an authorized redirect URI.
 

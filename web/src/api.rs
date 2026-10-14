@@ -81,12 +81,15 @@ pub fn files_of(list: &FileList) -> Vec<File> {
     (0..list.length()).filter_map(|i| list.get(i)).collect()
 }
 
-pub async fn upload(files: Vec<File>, project: Option<Id>, folder: Option<String>) -> ApiResult<Vec<Uploaded>> {
+pub async fn upload(files: Vec<File>, project: Option<Id>, folder: Option<String>, replace: bool) -> ApiResult<Vec<Uploaded>> {
     let form = FormData::new().expect("FormData");
     for f in &files {
         let _ = form.append_with_blob_and_filename("file", f, &f.name());
     }
-    let query: Vec<String> = [project.map(|p| format!("project={p}")), folder.map(|f| format!("folder={f}"))].into_iter().flatten().collect();
+    let query: Vec<String> = [project.map(|p| format!("project={p}")), folder.map(|f| format!("folder={f}")), replace.then(|| "replace=true".to_owned())]
+        .into_iter()
+        .flatten()
+        .collect();
     let path = format!("/api/files?{}", query.join("&"));
     let req = Request::post(&url(&path)).body(form).map_err(|e| ApiError { status: 0, msg: e.to_string() })?;
     read(req.send().await).await

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::auth::User;
-use crate::files::{Edit, ShareReq, Stored, clear_share, path_of, serve, set_share};
+use crate::files::{Edit, ShareReq, Stored, clear_share, serve, set_share};
 use crate::util::{Res, all, bad, exec, one, uuid};
 use crate::St;
 
@@ -85,7 +85,7 @@ pub async fn remove(app: St, user: User, Path(id): Path<String>) -> Res<Json<Val
     exec(&tx, &format!("{SUBTREE} DELETE FROM folders WHERE id IN (SELECT id FROM sub)"), p()).await?;
     tx.commit().await?;
     for k in keys {
-        let _ = tokio::fs::remove_file(path_of(&app, &k.key)).await;
+        app.storage.remove(&k.key).await;
     }
     Ok(Json(json!({ "ok": true })))
 }
