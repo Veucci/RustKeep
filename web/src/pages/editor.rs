@@ -430,7 +430,8 @@ pub fn RichEditor(
     let on_paste = move |ev: ClipboardEvent| {
         let Some(data) = ev.clipboard_data() else { return };
         let files = data.files().map(|l| api::files_of(&l)).unwrap_or_default();
-        let markdown = md::to_markdown(&parse_html(&data.get_data("text/html").unwrap_or_default()));
+        let text = data.get_data("text/plain").unwrap_or_default();
+        let markdown = if md::is_markdown(&text) { text } else { md::to_markdown(&parse_html(&data.get_data("text/html").unwrap_or_default())) };
         let use_files = !files.is_empty() && md::plain(&markdown).is_empty();
         if markdown.is_empty() && !use_files {
             return;

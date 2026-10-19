@@ -40,6 +40,12 @@ pub fn plain(src: &str) -> String {
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+pub fn is_markdown(src: &str) -> bool {
+    Parser::new_ext(src, OPTIONS).any(|ev| {
+        !matches!(ev, Event::Text(_) | Event::SoftBreak | Event::HardBreak | Event::Start(Tag::Paragraph) | Event::End(TagEnd::Paragraph))
+    })
+}
+
 pub fn escape_attr(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&#39;")
 }
@@ -293,7 +299,7 @@ fn escape_line_start(line: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{Element, Node, first_image, plain, render, to_markdown};
+    use super::{Element, Node, first_image, is_markdown, plain, render, to_markdown};
 
     fn t(s: &str) -> Node {
         Node::Text(s.to_owned())
@@ -349,6 +355,16 @@ mod tests {
         assert_eq!(first_image(src).as_deref(), Some("/api/files/1/raw"));
         assert_eq!(plain(src), "Intro bold item");
         assert_eq!(first_image("no image"), None);
+    }
+
+    #[test]
+    fn detects_pasted_markdown() {
+        assert!(is_markdown("# Title\n\nbody"));
+        assert!(is_markdown("- one\n- two"));
+        assert!(is_markdown("some **bold** text"));
+        assert!(is_markdown("```\ncode\n```"));
+        assert!(!is_markdown("just a plain sentence\nsecond line"));
+        assert!(!is_markdown("2 * 3 = 6"));
     }
 
     #[test]
