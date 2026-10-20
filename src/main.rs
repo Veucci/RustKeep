@@ -14,6 +14,7 @@ mod migrate;
 mod notes;
 mod projects;
 mod reminders;
+mod reset;
 mod signup;
 mod storage;
 mod templates;
@@ -67,7 +68,7 @@ CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL, pass TEXT NOT NULL,
   approved INTEGER NOT NULL DEFAULT 0, approve_token TEXT, pin TEXT,
   pin_fails INTEGER NOT NULL DEFAULT 0, pin_block INTEGER NOT NULL DEFAULT 0,
-  created INTEGER NOT NULL DEFAULT (unixepoch()));
+  created INTEGER NOT NULL DEFAULT (unixepoch()), avatar BLOB);
 CREATE TABLE IF NOT EXISTS sessions (
   token TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), expires INTEGER NOT NULL, pin_until INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS projects (
@@ -109,6 +110,9 @@ CREATE TABLE IF NOT EXISTS reminders (
 CREATE TABLE IF NOT EXISTS registrations (
   token TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), ip TEXT NOT NULL, agent TEXT NOT NULL, language TEXT NOT NULL,
   origin TEXT NOT NULL, created INTEGER NOT NULL DEFAULT (unixepoch()));
+CREATE TABLE IF NOT EXISTS password_resets (
+  token TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), expires INTEGER NOT NULL,
+  created INTEGER NOT NULL DEFAULT (unixepoch()));
 CREATE TABLE IF NOT EXISTS blocked_emails (email TEXT PRIMARY KEY, created INTEGER NOT NULL DEFAULT (unixepoch()));
 CREATE TABLE IF NOT EXISTS events (
   id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), title TEXT NOT NULL,
@@ -163,9 +167,17 @@ fn api() -> Router<Arc<App>> {
         .route("/api/auth/register", post(signup::register))
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/logout", post(auth::logout))
+        .route("/api/auth/forgot", post(reset::forgot))
+        .route("/api/auth/reset", post(reset::reset))
         .route("/api/auth/approve/{token}", get(signup::review).post(signup::approve))
         .route("/api/auth/reject/{token}", post(signup::reject))
-        .route("/api/me", get(auth::me))
+        .route("/api/me", get(auth::me).put(auth::update_profile))
+        .route("/api/me/password", put(auth::change_password))
+        .route("/api/me/stats", get(auth::stats))
+        .route(
+            "/api/me/avatar",
+            get(auth::avatar).put(auth::set_avatar).delete(auth::remove_avatar).layer(DefaultBodyLimit::max(auth::AVATAR_UPLOAD_LIMIT)),
+        )
         .route("/api/pin", post(auth::set_pin))
         .route("/api/pin/unlock", post(auth::unlock))
         .route("/api/pin/lock", post(auth::lock))

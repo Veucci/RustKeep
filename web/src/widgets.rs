@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 use wasm_bindgen::JsValue;
 
 use crate::api::{self, ApiError};
+use crate::components::ui::avatar::{Avatar, AvatarFallback, AvatarImage};
 use crate::components::ui::alert_dialog::{
     AlertDialogBody, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
     ControlledAlertDialog,
@@ -31,6 +32,7 @@ pub struct Me {
     pub email: String,
     pub name: String,
     pub has_pin: i64,
+    pub avatar: i64,
     pub pin_ok: bool,
 }
 
@@ -574,5 +576,21 @@ pub fn LogoTile(#[prop(into, optional)] class: String) -> impl IntoView {
         <div class=class>
             <Logo class="size-[70%]" />
         </div>
+    }
+}
+
+#[component]
+pub fn MeAvatar(#[prop(into, optional)] class: String, #[prop(into, optional)] fallback_class: String) -> impl IntoView {
+    let ui = use_ui();
+    let initials = move || ui.me.with(|m| m.as_ref().and_then(|m| m.name.chars().next()).map(|c| c.to_uppercase().to_string()).unwrap_or_default());
+    let version = move || ui.me.with(|m| m.as_ref().map_or(0, |m| m.avatar));
+    view! {
+        <Avatar class=class>
+            <AvatarFallback class=fallback_class>{initials}</AvatarFallback>
+            {move || {
+                let v = version();
+                (v > 0).then(|| view! { <AvatarImage class="rounded-[inherit]" attr:src=api::url(&format!("/api/me/avatar?v={v}")) attr:alt="" /> })
+            }}
+        </Avatar>
     }
 }

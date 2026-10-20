@@ -67,6 +67,11 @@ pub async fn put<T: DeserializeOwned>(path: &str, body: &impl Serialize) -> ApiR
     with_body(Request::put(&url(path)), body).await
 }
 
+pub async fn put_file<T: DeserializeOwned>(path: &str, file: &File) -> ApiResult<T> {
+    let req = Request::put(&url(path)).body(file).map_err(|e| ApiError { status: 0, msg: e.to_string() })?;
+    read(req.send().await).await
+}
+
 pub async fn del(path: &str) -> ApiResult<Value> {
     read(Request::delete(&url(path)).send().await).await
 }

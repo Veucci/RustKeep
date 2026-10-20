@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
 use axum::Json;
+use axum::body::Bytes;
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, StatusCode, header};
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Response};
 use libsql::params;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -129,6 +130,7 @@ pub struct Me {
     email: String,
     name: String,
     has_pin: i64,
+    avatar: i64,
     #[serde(default)]
     pin_ok: bool,
 }
@@ -136,7 +138,7 @@ pub struct Me {
 pub async fn me(app: St, user: User) -> Res<Json<Me>> {
     let mut me: Me = one(
         &app.db,
-        "SELECT id, email, name, pin IS NOT NULL AS has_pin FROM users WHERE id = ?1",
+        "SELECT id, email, name, pin IS NOT NULL AS has_pin, COALESCE(length(avatar), 0) AS avatar FROM users WHERE id = ?1",
         params![user.id.as_str()],
     )
     .await?;
@@ -207,4 +209,111 @@ pub async fn unlock(app: St, user: User, Json(r): Json<UnlockReq>) -> Res<Json<V
 pub async fn lock(app: St, user: User) -> Res<Json<Value>> {
     app.db.execute("UPDATE sessions SET pin_until = 0 WHERE token = ?1", params![user.token]).await?;
     Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+pub struct ProfileReq {
+    name: String,
+    email: String,
+    password: String,
+}
+
+pub async fn update_profile(app: St, user: User, Json(r): Json<ProfileReq>) -> Res<Json<Value>> {
+    let email = r.email.trim().to_lowercase();
+    let name = r.name.trim();
+    if !email.contains('@') || name.is_empty() {
+        return Err(bad("Provide a name and a valid email"));
+    }
+    let row: LoginRow = one(&app.db, "SELECT id, pass, approved FROM users WHERE id = ?1", params![user.id.as_str()]).await?;
+    if !verify(&r.password, &row.pass) {
+        return Err(err(StatusCode::UNAUTHORIZED, "Wrong password"));
+    }
+    let mut taken = app.db.query("SELECT 1 FROM users WHERE email = ?1 AND id != ?2", params![email.as_str(), user.id.as_str()]).await?;
+    if taken.next().await?.is_some() {
+        return Err(err(StatusCode::CONFLICT, "This email is already in use"));
+    }
+    exec(&app.db, "UPDATE users SET name = ?1, email = ?2 WHERE id = ?3", params![name, email, user.id.as_str()]).await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+pub struct PasswordReq {
+    password: String,
+    new_password: String,
+}
+
+pub async fn change_password(app: St, user: User, Json(r): Json<PasswordReq>) -> Res<Json<Value>> {
+    if r.new_password.len() < 8 {
+        return Err(bad("New password must be at least 8 characters"));
+    }
+    let row: LoginRow = one(&app.db, "SELECT id, pass, approved FROM users WHERE id = ?1", params![user.id.as_str()]).await?;
+    if !verify(&r.password, &row.pass) {
+        return Err(err(StatusCode::UNAUTHORIZED, "Wrong password"));
+    }
+    exec(&app.db, "UPDATE users SET pass = ?1 WHERE id = ?2", params![hash(&r.new_password), user.id.as_str()]).await?;
+    app.db
+        .execute("DELETE FROM sessions WHERE user_id = ?1 AND token != ?2", params![user.id.as_str(), user.token])
+        .await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct AccountStats {
+    created: i64,
+    notes: i64,
+    projects: i64,
+    tasks: i64,
+    files: i64,
+    folders: i64,
+    vault: i64,
+    reminders: i64,
+    events: i64,
+    file_bytes: i64,
+    note_bytes: i64,
+}
+
+const ACCOUNT_STATS: &str = "SELECT \
+    (SELECT created FROM users WHERE id = ?1) AS created, \
+    (SELECT COUNT(*) FROM notes WHERE user_id = ?1 AND trashed_at IS NULL) AS notes, \
+    (SELECT COUNT(*) FROM projects WHERE user_id = ?1) AS projects, \
+    (SELECT COUNT(*) FROM tasks t JOIN projects p ON p.id = t.project_id WHERE p.user_id = ?1) AS tasks, \
+    (SELECT COUNT(*) FROM files WHERE user_id = ?1) AS files, \
+    (SELECT COUNT(*) FROM folders WHERE user_id = ?1) AS folders, \
+    (SELECT COUNT(*) FROM vault WHERE user_id = ?1) AS vault, \
+    (SELECT COUNT(*) FROM reminders WHERE user_id = ?1) AS reminders, \
+    (SELECT COUNT(*) FROM events WHERE user_id = ?1) AS events, \
+    (SELECT COALESCE(SUM(size), 0) FROM files WHERE user_id = ?1) AS file_bytes, \
+    (SELECT COALESCE(SUM(length(CAST(body AS BLOB)) + length(CAST(title AS BLOB))), 0) FROM notes WHERE user_id = ?1) AS note_bytes";
+
+pub async fn stats(app: St, user: User) -> Res<Json<AccountStats>> {
+    Ok(Json(one(&app.db, ACCOUNT_STATS, params![user.id.as_str()]).await?))
+}
+
+pub const AVATAR_UPLOAD_LIMIT: usize = 15 * 1024 * 1024;
+const AVATAR_SIDE: u32 = 256;
+
+fn avatar_jpeg(bytes: &[u8]) -> Option<Vec<u8>> {
+    let img = image::load_from_memory(bytes).ok()?;
+    let square = img.resize_to_fill(AVATAR_SIDE, AVATAR_SIDE, image::imageops::FilterType::Lanczos3).to_rgb8();
+    let mut out = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 85).encode_image(&square).ok()?;
+    Some(out)
+}
+
+pub async fn set_avatar(app: St, user: User, bytes: Bytes) -> Res<Json<Value>> {
+    let jpeg = tokio::task::spawn_blocking(move || avatar_jpeg(&bytes)).await?.ok_or_else(|| bad("Unsupported image"))?;
+    exec(&app.db, "UPDATE users SET avatar = ?1 WHERE id = ?2", params![jpeg, user.id.as_str()]).await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+pub async fn remove_avatar(app: St, user: User) -> Res<Json<Value>> {
+    exec(&app.db, "UPDATE users SET avatar = NULL WHERE id = ?1", params![user.id.as_str()]).await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+pub async fn avatar(app: St, user: User) -> Res<Response> {
+    let mut rows = app.db.query("SELECT avatar FROM users WHERE id = ?1 AND avatar IS NOT NULL", params![user.id.as_str()]).await?;
+    let row = rows.next().await?.ok_or_else(crate::util::not_found)?;
+    let jpeg: Vec<u8> = row.get(0)?;
+    Ok(([(header::CONTENT_TYPE, "image/jpeg"), (header::CACHE_CONTROL, "private, no-cache")], jpeg).into_response())
 }

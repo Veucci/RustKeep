@@ -23,7 +23,6 @@ use serde_json::Value;
 use wasm_bindgen::JsCast;
 
 use crate::components::hooks::use_theme_mode::ThemeMode;
-use crate::components::ui::avatar::{Avatar, AvatarFallback};
 use crate::components::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::components::ui::separator::{Separator, SeparatorOrientation};
 use crate::components::ui::sidenav::{
@@ -32,7 +31,7 @@ use crate::components::ui::sidenav::{
 };
 use crate::components::ui::theme_toggle::ThemeToggle;
 use crate::pages::notes::View;
-use crate::widgets::{ConfirmDialog, LogoTile, Toast, Ui, use_ui};
+use crate::widgets::{ConfirmDialog, LogoTile, MeAvatar, Toast, Ui, use_ui};
 
 fn main() {
     std::panic::set_hook(Box::new(|info| web_sys::console::error_1(&info.to_string().into())));
@@ -61,6 +60,8 @@ fn App() -> impl IntoView {
             <Routes fallback=NotFound>
                 <Route path=path!("/login") view=pages::auth::Login />
                 <Route path=path!("/register") view=pages::auth::Register />
+                <Route path=path!("/forgot") view=pages::auth::ForgotPassword />
+                <Route path=path!("/reset/:token") view=pages::auth::ResetPassword />
                 <Route path=path!("/s/:token") view=pages::shared::SharedNote />
                 <Route path=path!("/d/:token") view=pages::shared_folder::SharedFolder />
                 <Route path=path!("/b/:token") view=pages::shared_board::SharedBoard />
@@ -78,6 +79,7 @@ fn App() -> impl IntoView {
                     <Route path=path!("vault") view=pages::vault::Vault />
                     <Route path=path!("reminders") view=pages::reminders::Reminders />
                     <Route path=path!("calendar") view=pages::calendar::CalendarPage />
+                    <Route path=path!("me") view=pages::account::AccountPage />
                 </ParentRoute>
             </Routes>
             <Toast />
@@ -108,6 +110,7 @@ fn section(path: &str) -> (&'static str, &'static str) {
         "vault" => ("Vault", "/vault"),
         "archive" => ("Archive", "/archive"),
         "trash" => ("Trash", "/trash"),
+        "me" => ("Account", "/me"),
         _ => ("Dashboard", "/"),
     }
 }
@@ -199,17 +202,20 @@ fn UserCard() -> impl IntoView {
     let pin_ok = move || ui.me.with(|m| m.as_ref().is_some_and(|m| m.pin_ok));
     let name = move || ui.me.with(|m| m.as_ref().map(|m| m.name.clone()).unwrap_or_default());
     let email = move || ui.me.with(|m| m.as_ref().map(|m| m.email.clone()).unwrap_or_default());
-    let initials = move || name().chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default();
 
     view! {
-        <div class="flex gap-2 items-center p-2 rounded-lg hover:bg-sidenav-accent">
-            <Avatar class="rounded-lg">
-                <AvatarFallback class="rounded-lg">{initials}</AvatarFallback>
-            </Avatar>
-            <div class="flex flex-col flex-1 min-w-0 text-sm leading-tight">
-                <span class="font-medium truncate">{name}</span>
-                <span class="text-xs truncate text-muted-foreground">{email}</span>
-            </div>
+        <div class="flex gap-1 items-center">
+            <A
+                href=api::url("/me")
+                attr:class="flex flex-1 gap-2 items-center p-2 min-w-0 rounded-lg transition-colors cursor-pointer hover:bg-sidenav-accent"
+                attr:title="Account settings"
+            >
+                <MeAvatar class="rounded-lg" fallback_class="rounded-lg" />
+                <div class="flex flex-col flex-1 min-w-0 text-sm leading-tight">
+                    <span class="font-medium truncate">{name}</span>
+                    <span class="text-xs truncate text-muted-foreground">{email}</span>
+                </div>
+            </A>
             <Show when=pin_ok>
                 <Button variant=ButtonVariant::Ghost size=ButtonSize::IconSm attr:title="Lock secret area" on:click=lock>
                     <Lock />
