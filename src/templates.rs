@@ -1,5 +1,7 @@
 use serde::Deserialize;
 
+use crate::markdown::email_html;
+use crate::reminders::Due;
 use crate::util::esc;
 
 #[derive(Deserialize)]
@@ -82,10 +84,9 @@ pub fn message_page(title: &str, text: &str) -> String {
     page(title, &format!("<h1>{}</h1><p>{}</p>", esc(title), esc(text)))
 }
 
-pub fn approval_email(a: &Applicant, link: &str, logo_url: &str) -> String {
-    let rows: String = a
-        .rows()
-        .iter()
+fn email_rows<'a>(rows: impl IntoIterator<Item = (&'a str, &'a str)>) -> String {
+    let rows: String = rows
+        .into_iter()
         .map(|(k, v)| {
             format!(
                 "<tr><td style=\"padding:10px 12px;border-bottom:1px solid #e5e5e5;background:#f5f5f5;color:#737373;width:130px;vertical-align:top\">{k}</td>\
@@ -95,27 +96,21 @@ pub fn approval_email(a: &Applicant, link: &str, logo_url: &str) -> String {
         })
         .collect();
     format!(
-        "<!doctype html><html><body style=\"margin:0;padding:32px 12px;background:#fafafa;font-family:Inter,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:1.5;color:#0a0a0a\">\
-         <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr><td align=\"center\">\
-         <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:520px;background:#ffffff;border:1px solid #e5e5e5;border-radius:14px\">\
-         <tr><td style=\"padding:28px 28px 0\"><table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\"><tr>\
-         <td><img src=\"{logo}\" width=\"34\" height=\"34\" alt=\"RustKeep\" style=\"display:block;border-radius:9px\"></td>\
-         <td style=\"padding-left:10px;font-weight:600\">RustKeep</td></tr></table></td></tr>\
-         <tr><td style=\"padding:22px 28px 0\"><div style=\"font-size:20px;font-weight:600\">New account request</div>\
-         <div style=\"color:#737373\">{name} wants to join your RustKeep workspace.</div></td></tr>\
-         <tr><td style=\"padding:22px 28px 0\"><table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" \
-         style=\"border:1px solid #e5e5e5;border-radius:10px;border-collapse:separate;overflow:hidden\">{rows}</table></td></tr>\
-         <tr><td style=\"padding:24px 28px 28px\"><a href=\"{link}\" style=\"display:inline-block;background:#171717;color:#fafafa;text-decoration:none;\
-         font-weight:500;padding:10px 18px;border-radius:8px\">Review request</a>\
-         <div style=\"margin-top:14px;color:#737373;font-size:12px\">You can approve or reject the account on the review page.</div></td></tr>\
-         </table></td></tr></table></body></html>",
-        logo = esc(logo_url),
-        name = esc(&a.name),
-        link = esc(link),
+        "<tr><td style=\"padding:22px 28px 0\"><table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" \
+         style=\"border:1px solid #e5e5e5;border-radius:10px;border-collapse:separate;overflow:hidden\">{rows}</table></td></tr>"
     )
 }
 
-pub fn notice_email(title: &str, text: &str, action: &str, link: &str, logo_url: &str) -> String {
+struct Email<'a> {
+    title: &'a str,
+    text: &'a str,
+    content: String,
+    action: &'a str,
+    link: &'a str,
+    footer: &'a str,
+}
+
+fn email(m: Email, logo_url: &str) -> String {
     format!(
         "<!doctype html><html><body style=\"margin:0;padding:32px 12px;background:#fafafa;font-family:Inter,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:1.5;color:#0a0a0a\">\
          <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr><td align=\"center\">\
@@ -124,14 +119,64 @@ pub fn notice_email(title: &str, text: &str, action: &str, link: &str, logo_url:
          <td><img src=\"{logo}\" width=\"34\" height=\"34\" alt=\"RustKeep\" style=\"display:block;border-radius:9px\"></td>\
          <td style=\"padding-left:10px;font-weight:600\">RustKeep</td></tr></table></td></tr>\
          <tr><td style=\"padding:22px 28px 0\"><div style=\"font-size:20px;font-weight:600\">{title}</div>\
-         <div style=\"color:#737373\">{text}</div></td></tr>\
+         <div style=\"color:#737373\">{text}</div></td></tr>{content}\
          <tr><td style=\"padding:24px 28px 28px\"><a href=\"{link}\" style=\"display:inline-block;background:#171717;color:#fafafa;text-decoration:none;\
-         font-weight:500;padding:10px 18px;border-radius:8px\">{action}</a></td></tr>\
+         font-weight:500;padding:10px 18px;border-radius:8px\">{action}</a>{footer}</td></tr>\
          </table></td></tr></table></body></html>",
         logo = esc(logo_url),
-        title = esc(title),
-        text = esc(text),
-        action = esc(action),
-        link = esc(link),
+        title = esc(m.title),
+        text = esc(m.text),
+        content = m.content,
+        action = esc(m.action),
+        link = esc(m.link),
+        footer = m.footer,
     )
+}
+
+pub fn approval_email(a: &Applicant, link: &str, logo_url: &str) -> String {
+    let text = format!("{} wants to join your RustKeep workspace.", a.name);
+    let m = Email {
+        title: "New account request",
+        text: &text,
+        content: email_rows(a.rows()),
+        action: "Review request",
+        link,
+        footer: "<div style=\"margin-top:14px;color:#737373;font-size:12px\">You can approve or reject the account on the review page.</div>",
+    };
+    email(m, logo_url)
+}
+
+pub fn notice_email(title: &str, text: &str, action: &str, link: &str, logo_url: &str) -> String {
+    email(Email { title, text, content: String::new(), action, link, footer: "" }, logo_url)
+}
+
+fn utc_label(minutes: i64) -> String {
+    let sign = if minutes < 0 { '-' } else { '+' };
+    format!("UTC{sign}{:02}:{:02}", minutes.abs() / 60, minutes.abs() % 60)
+}
+
+pub fn reminder_email(d: &Due, link: &str, logo_url: &str, origin: &str) -> String {
+    let when = format!("{} ({})", d.when, utc_label(d.utc_offset));
+    let mut content = email_rows([("When", when.as_str())].into_iter().chain(d.note_title.as_deref().map(|t| ("Note", t))));
+    if !d.description.is_empty() {
+        content.push_str(&format!(
+            "<tr><td style=\"padding:22px 28px 0\"><div style=\"border:1px solid #e5e5e5;border-radius:10px;padding:2px 16px;word-break:break-word\">{}</div></td></tr>",
+            email_html(&d.description, origin)
+        ));
+    }
+    let action = if d.note_id.is_some() { "Open note" } else { "Open reminders" };
+    let m = Email { title: &d.title, text: "This is the reminder you scheduled in RustKeep.", content, action, link, footer: "" };
+    email(m, logo_url)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::utc_label;
+
+    #[test]
+    fn labels_utc_offsets() {
+        assert_eq!(utc_label(180), "UTC+03:00");
+        assert_eq!(utc_label(-210), "UTC-03:30");
+        assert_eq!(utc_label(0), "UTC+00:00");
+    }
 }

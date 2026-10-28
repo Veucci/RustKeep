@@ -112,7 +112,8 @@ CREATE TABLE IF NOT EXISTS vault (
   note TEXT NOT NULL DEFAULT '', created INTEGER NOT NULL DEFAULT (unixepoch()));
 CREATE TABLE IF NOT EXISTS reminders (
   id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), note_id TEXT REFERENCES notes(id), title TEXT NOT NULL,
-  remind_at INTEGER NOT NULL, sent INTEGER NOT NULL DEFAULT 0, archived INTEGER NOT NULL DEFAULT 0);
+  remind_at INTEGER NOT NULL, sent INTEGER NOT NULL DEFAULT 0, archived INTEGER NOT NULL DEFAULT 0,
+  description TEXT NOT NULL DEFAULT '', utc_offset INTEGER NOT NULL DEFAULT 0, retry_at INTEGER);
 CREATE TABLE IF NOT EXISTS registrations (
   token TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), ip TEXT NOT NULL, agent TEXT NOT NULL, language TEXT NOT NULL,
   origin TEXT NOT NULL, created INTEGER NOT NULL DEFAULT (unixepoch()));
@@ -215,7 +216,7 @@ fn api() -> Router<Arc<App>> {
         .route("/api/vault", get(vault::list).post(vault::create))
         .route("/api/vault/{id}", get(vault::reveal).delete(vault::remove))
         .route("/api/reminders", get(reminders::list).post(reminders::create))
-        .route("/api/reminders/{id}", delete(reminders::remove))
+        .route("/api/reminders/{id}", put(reminders::update).delete(reminders::remove))
         .route("/api/reminders/{id}/action/{action}", post(reminders::action))
         .route("/api/projects", get(projects::list).post(projects::create))
         .route("/api/projects/{id}", get(projects::get).put(projects::update).delete(projects::remove))

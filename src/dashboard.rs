@@ -80,7 +80,7 @@ pub async fn get(app: St, user: User) -> Res<Json<Dashboard>> {
         .await?,
         reminders: all(
             db,
-            "SELECT id, title, remind_at, note_id, sent, archived FROM reminders \
+            "SELECT id, title, description, remind_at, note_id, sent, archived FROM reminders \
              WHERE user_id = ?1 AND sent = 0 AND archived = 0 ORDER BY remind_at LIMIT 5",
             params![u],
         )

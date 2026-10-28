@@ -496,42 +496,6 @@ pub fn ShareDialog(
 }
 
 #[component]
-pub fn ReminderForm(note_id: Option<String>, #[prop(into)] title: String, on_done: Callback<()>) -> impl IntoView {
-    let ui = use_ui();
-    let title = RwSignal::new(title);
-    let at = RwSignal::new(String::new());
-    let submit = move |ev: SubmitEvent| {
-        ev.prevent_default();
-        let Some(remind_at) = parse_local(&at.get_untracked()) else {
-            ui.notify("Pick a date and time");
-            return;
-        };
-        let note_id = note_id.clone();
-        spawn_local(async move {
-            let body = json!({ "title": title.get_untracked(), "remind_at": remind_at, "note_id": note_id });
-            if ui.run(api::post::<Value>("/api/reminders", &body)).await.is_some() {
-                at.set(String::new());
-                ui.notify("Reminder added");
-                on_done.run(());
-            }
-        });
-    };
-    view! {
-        <form class="flex flex-col gap-3 sm:flex-row sm:items-end" on:submit=submit>
-            <div class="flex flex-col flex-1 gap-2">
-                <Label>"Title"</Label>
-                <Input id="new-item" bind_value=title required=true />
-            </div>
-            <div class="flex flex-col gap-2">
-                <Label>"When"</Label>
-                <DateTimePicker bind_value=at class="sm:w-56" />
-            </div>
-            <Button>"Remind me"</Button>
-        </form>
-    }
-}
-
-#[component]
 pub fn PageHeader(
     #[prop(into)] title: TextProp,
     #[prop(into, optional)] description: String,

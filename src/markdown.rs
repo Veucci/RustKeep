@@ -5,7 +5,7 @@ use std::sync::LazyLock;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;
 use image::ImageFormat;
-use pulldown_cmark::{Alignment, BlockQuoteKind, CodeBlockKind, CowStr, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{Alignment, BlockQuoteKind, CodeBlockKind, CowStr, Event, HeadingLevel, LinkType, Options, Parser, Tag, TagEnd};
 use resvg::usvg;
 use syntect::highlighting::ThemeSet;
 use syntect::html::{ClassStyle, ClassedHTMLGenerator, css_for_theme_with_class_style};
@@ -174,6 +174,33 @@ pub fn html(title: &str, markdown: &str, images: Images) -> String {
     let mut body = String::new();
     pulldown_cmark::html::push_html(&mut body, events.into_iter());
     page(title, &body)
+}
+
+fn email_link(dest: &str, origin: &str) -> Option<String> {
+    let dest = dest.trim();
+    match dest.split_once(':').map(|(scheme, _)| scheme.to_ascii_lowercase()).as_deref() {
+        Some("http" | "https" | "mailto") => Some(dest.to_owned()),
+        None if dest.starts_with('/') && !dest.starts_with("//") => Some(format!("{origin}{dest}")),
+        _ => None,
+    }
+}
+
+pub fn email_html(markdown: &str, origin: &str) -> String {
+    let mut open_links = Vec::new();
+    let events = Parser::new_ext(markdown, OPTIONS).map(|event| match event {
+        Event::Html(h) | Event::InlineHtml(h) => Event::Text(h),
+        Event::Start(Tag::Link { link_type, dest_url, .. } | Tag::Image { link_type, dest_url, .. }) => {
+            let dest = if link_type == LinkType::Email { format!("mailto:{dest_url}") } else { dest_url.into_string() };
+            let href = email_link(&dest, origin).filter(|_| !open_links.contains(&true));
+            open_links.push(href.is_some());
+            Event::InlineHtml(href.map(|h| format!("<a href=\"{}\">", esc(&h))).unwrap_or_default().into())
+        }
+        Event::End(TagEnd::Link | TagEnd::Image) => Event::InlineHtml(if open_links.pop() == Some(true) { "</a>" } else { "" }.into()),
+        event => event,
+    });
+    let mut out = String::new();
+    pulldown_cmark::html::push_html(&mut out, events);
+    out
 }
 
 const PAGE_CSS: &str = r#"
@@ -525,6 +552,27 @@ pub fn plain_pdf(title: &str, text: &str) -> Res<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn email_html_keeps_only_safe_links() {
+        let out = email_html(
+            "[a](https://x.dev) [b](javascript:alert(1)) ![pic](/note/api/files/1/raw) <b>raw</b>",
+            "https://keep.test",
+        );
+        assert!(out.contains("<a href=\"https://x.dev\">a</a>"));
+        assert!(out.contains(" b "));
+        assert!(!out.contains("javascript"));
+        assert!(out.contains("<a href=\"https://keep.test/note/api/files/1/raw\">pic</a>"));
+        assert!(out.contains("&lt;b&gt;raw&lt;/b&gt;"));
+    }
+
+    #[test]
+    fn email_html_balances_nested_links() {
+        let out = email_html("[![b](/x.png)](https://site) after [![c](javascript:x)](https://s2) end <me@x.dev>", "https://o");
+        assert!(out.contains("<a href=\"https://site\">b</a> after"));
+        assert!(out.contains("<a href=\"https://s2\">c</a> end"));
+        assert!(out.contains("<a href=\"mailto:me@x.dev\">me@x.dev</a>"));
+    }
 
     const SAMPLE: &str = "# Title\n\nText with **bold**, *it*, ~~gone~~, `code` and [link](https://x.dev) #1 $5 a < b @me.\n\n\
         | Name | Qty |\n|:-----|----:|\n| Apple | 3 |\n| Pear | 10 |\n\n\

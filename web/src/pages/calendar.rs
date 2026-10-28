@@ -124,7 +124,7 @@ fn clock(ts: i64) -> String {
     format!("{:02}:{:02}", t.hour(), t.minute())
 }
 
-fn local_text(ts: i64) -> String {
+pub fn local_text(ts: i64) -> String {
     format!("{}T{}", format_date(local(ts).date()), clock(ts))
 }
 

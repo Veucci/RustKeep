@@ -1,19 +1,27 @@
 use std::cmp::Reverse;
 
-use icons::{AlarmClock, Archive, ArchiveRestore, Bell, Check, FileText, Trash2};
+use icons::{Archive, ArchiveRestore, Bell, Check, FileText, Pencil, Trash2};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos_router::components::A;
 use serde::Deserialize;
+use serde_json::{Value, json};
+use wasm_bindgen::JsValue;
 
 use crate::api;
 use crate::id::Id;
+use crate::md;
 use crate::components::ui::badge::{Badge, BadgeVariant};
 use crate::components::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::components::ui::card::{Card, CardContent};
+use crate::components::ui::date_picker::DateTimePicker;
 use crate::components::ui::empty::{Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyMediaVariant, EmptyTitle};
+use crate::components::ui::input::Input;
+use crate::components::ui::label::Label;
+use crate::pages::calendar::local_text;
+use crate::pages::editor::RichEditor;
 use crate::widgets::{
-    ListSkeleton, Options, PageHeader, ReminderForm, SearchBox, Segmented, SortSelect, Toolbar, fmt_time, has, query_state,
+    ListSkeleton, Modal, Options, PageHeader, SearchBox, Segmented, SortSelect, Toolbar, fmt_time, has, parse_local, query_state,
     use_ui,
 };
 
@@ -24,6 +32,8 @@ const SORTS: Options = &[("soonest", "Soonest first"), ("latest", "Latest first"
 pub struct Reminder {
     pub id: Id,
     pub title: String,
+    #[serde(default)]
+    pub description: String,
     pub remind_at: i64,
     pub note_id: Option<String>,
     pub sent: i64,
@@ -39,7 +49,7 @@ fn arrange(mut list: Vec<Reminder>, q: &str, show: &str, sort: &str) -> Vec<Remi
             "archived" => r.archived == 1,
             _ => true,
         };
-        shown && has(&r.title, q)
+        shown && (has(&r.title, q) || has(&r.description, q))
     });
     match sort {
         "latest" => list.sort_by_key(|r| Reverse(r.remind_at)),
@@ -58,10 +68,92 @@ pub fn Reminders() -> impl IntoView {
             <PageHeader title="Reminders" description="Delivered to your email address at the chosen time." />
             <Card>
                 <CardContent>
-                    <ReminderForm note_id=None title="" on_done=Callback::new(move |_| reload.update(|n| *n += 1)) />
+                    <ReminderForm on_done=Callback::new(move |_| reload.update(|n| *n += 1)) />
                 </CardContent>
             </Card>
             <ReminderList reload />
+        </div>
+    }
+}
+
+#[component]
+pub fn ReminderForm(
+    #[prop(optional)] reminder: Option<Reminder>,
+    #[prop(optional)] note_id: Option<String>,
+    #[prop(into, optional)] title: String,
+    on_done: Callback<()>,
+) -> impl IntoView {
+    let ui = use_ui();
+    let id = reminder.as_ref().map(|r| r.id);
+    let title = RwSignal::new(reminder.as_ref().map_or(title, |r| r.title.clone()));
+    let description = RwSignal::new(reminder.as_ref().map(|r| r.description.clone()).unwrap_or_default());
+    let original = reminder.as_ref().map(|r| (local_text(r.remind_at), r.remind_at));
+    let at = RwSignal::new(original.clone().map(|(text, _)| text).unwrap_or_default());
+    let busy = RwSignal::new(false);
+    let save = Callback::new(move |()| {
+        if busy.get_untracked() {
+            return;
+        }
+        let text = at.get_untracked();
+        let unchanged = original.as_ref().filter(|(shown, _)| *shown == text).map(|(_, ts)| *ts);
+        let Some(remind_at) = unchanged.or_else(|| parse_local(&text)) else {
+            ui.notify("Pick a date and time");
+            return;
+        };
+        let utc_offset = -js_sys::Date::new(&JsValue::from_f64(remind_at as f64 * 1000.0)).get_timezone_offset() as i64;
+        let body = json!({
+            "title": title.get_untracked(),
+            "description": description.get_untracked(),
+            "remind_at": remind_at,
+            "utc_offset": utc_offset,
+            "note_id": note_id,
+        });
+        busy.set(true);
+        spawn_local(async move {
+            let saved = match id {
+                Some(id) => ui.run(api::put::<Value>(&format!("/api/reminders/{id}"), &body)).await,
+                None => ui.run(api::post::<Value>("/api/reminders", &body)).await,
+            };
+            busy.set(false);
+            if saved.is_none() {
+                return;
+            }
+            if id.is_none() {
+                title.set(String::new());
+                at.set(String::new());
+                description.set(String::new());
+            }
+            ui.notify(if id.is_some() { "Reminder updated" } else { "Reminder added" });
+            on_done.run(());
+        });
+    });
+    view! {
+        <div class="flex flex-col gap-3">
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-end">
+                <div class="flex flex-col flex-1 gap-2">
+                    <Label>"Title"</Label>
+                    <Input
+                        id=if id.is_some() { "edit-item" } else { "new-item" }
+                        bind_value=title
+                        on:keydown=move |ev: web_sys::KeyboardEvent| {
+                            if ev.key() == "Enter" && !ev.is_composing() && !ev.repeat() {
+                                save.run(());
+                            }
+                        }
+                    />
+                </div>
+                <div class="flex flex-col gap-2">
+                    <Label>"When"</Label>
+                    <DateTimePicker bind_value=at class="sm:w-56" />
+                </div>
+            </div>
+            <div class="flex flex-col gap-2">
+                <Label>"Description (optional)"</Label>
+                <RichEditor body=description on_change=Callback::new(|_| ()) compact=true min_height="min-h-24" placeholder="Add details..." />
+            </div>
+            <div class="flex justify-end">
+                <Button attr:disabled=move || busy.get() on:click=move |_| save.run(())>{if id.is_some() { "Save" } else { "Remind me" }}</Button>
+            </div>
         </div>
     }
 }
@@ -80,6 +172,16 @@ pub fn ReminderList(#[prop(optional)] reload: Option<RwSignal<u32>>, #[prop(opti
     let show = if archive_only { Signal::stored("archived".to_owned()) } else { show };
     let (sort, set_sort) = query_state("sort", "soonest");
     let refresh = Callback::new(move |_| items.refetch());
+    let editing = RwSignal::new(None::<Reminder>);
+    let edit_open = RwSignal::new(false);
+    let edit = Callback::new(move |reminder| {
+        editing.set(Some(reminder));
+        edit_open.set(true);
+    });
+    let saved = Callback::new(move |_| {
+        edit_open.set(false);
+        items.refetch();
+    });
     let rows = move || items.get().flatten().map(|list| arrange(list, &q.get(), &show.get(), &sort.get()));
 
     view! {
@@ -105,9 +207,21 @@ pub fn ReminderList(#[prop(optional)] reload: Option<RwSignal<u32>>, #[prop(opti
                     </Empty>
                 }
                 .into_any(),
-                Some(list) => list.into_iter().map(|r| view! { <ReminderRow reminder=r reload=refresh /> }).collect_view().into_any(),
+                Some(list) => view! {
+                    <For
+                        each=move || list.clone()
+                        key=|r| (r.id, r.title.clone(), r.description.clone(), r.remind_at, r.sent, r.archived)
+                        let(reminder)
+                    >
+                        <ReminderRow reminder reload=refresh edit />
+                    </For>
+                }
+                .into_any(),
             }}
         </Card>
+        <Modal open=edit_open title="Edit reminder" class="max-w-[min(40rem,calc(100%-2rem))]">
+            {move || editing.get().map(|reminder| view! { <ReminderForm reminder on_done=saved /> })}
+        </Modal>
     }
 }
 
@@ -122,7 +236,7 @@ fn status(r: &Reminder) -> AnyView {
 }
 
 #[component]
-fn ReminderRow(reminder: Reminder, reload: Callback<()>) -> impl IntoView {
+fn ReminderRow(reminder: Reminder, reload: Callback<()>, edit: Callback<Reminder>) -> impl IntoView {
     let ui = use_ui();
     let id = reminder.id;
     let act = move |action: &'static str| ui.act(format!("/api/reminders/{id}/action/{action}"), move || reload.run(()));
@@ -138,6 +252,8 @@ fn ReminderRow(reminder: Reminder, reload: Callback<()>) -> impl IntoView {
     let pending = reminder.sent == 0;
     let archived = reminder.archived == 1;
     let badge = status(&reminder);
+    let summary = md::plain(&reminder.description);
+    let stored = StoredValue::new(reminder.clone());
 
     view! {
         <div class="flex flex-wrap gap-3 items-center py-3 px-4 transition-colors group hover:bg-muted/50">
@@ -147,6 +263,7 @@ fn ReminderRow(reminder: Reminder, reload: Callback<()>) -> impl IntoView {
             <div class="flex flex-col flex-1 min-w-48">
                 <span class="font-medium truncate" class=("line-through", !pending) class=("text-muted-foreground", !pending)>{reminder.title}</span>
                 <span class="text-xs text-muted-foreground">{fmt_time(reminder.remind_at)}</span>
+                {(!summary.is_empty()).then(|| view! { <span class="text-xs text-muted-foreground line-clamp-1">{summary}</span> })}
             </div>
             {reminder.note_id.map(|n| view! {
                 <Button variant=ButtonVariant::Ghost size=ButtonSize::Sm href=api::url(&format!("/notes/{n}"))>
@@ -161,11 +278,9 @@ fn ReminderRow(reminder: Reminder, reload: Callback<()>) -> impl IntoView {
                         <Check />
                     </Button>
                 </Show>
-                <Show when=move || !archived>
-                    <Button variant=ButtonVariant::Ghost size=ButtonSize::IconSm attr:title="Snooze one day" on:click=move |_| act("snooze")>
-                        <AlarmClock />
-                    </Button>
-                </Show>
+                <Button variant=ButtonVariant::Ghost size=ButtonSize::IconSm attr:title="Edit" on:click=move |_| edit.run(stored.get_value())>
+                    <Pencil />
+                </Button>
                 <Button
                     variant=ButtonVariant::Ghost
                     size=ButtonSize::IconSm

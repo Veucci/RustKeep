@@ -19,7 +19,8 @@ use crate::components::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::components::ui::input::Input;
 use crate::md;
 use crate::pages::projects::ProjectItem;
-use crate::widgets::{Choice, Modal, PinGate, ReminderForm, ShareDialog, use_ui};
+use crate::pages::reminders::ReminderForm;
+use crate::widgets::{Choice, Modal, PinGate, ShareDialog, use_ui};
 
 #[derive(Clone, Deserialize)]
 pub struct Note {
@@ -223,8 +224,8 @@ fn EditorBody(note: Note) -> impl IntoView {
                 })}
             </div>
         </Modal>
-        <Modal open=remind_open title="Add reminder">
-            <ReminderForm note_id=Some(id.get_value()) title=if secret { String::new() } else { title.get_untracked() } on_done=Callback::new(move |_| remind_open.set(false)) />
+        <Modal open=remind_open title="Add reminder" class="max-w-[min(40rem,calc(100%-2rem))]">
+            <ReminderForm note_id=id.get_value() title=if secret { String::new() } else { title.get_untracked() } on_done=Callback::new(move |_| remind_open.set(false)) />
         </Modal>
     }
 }
