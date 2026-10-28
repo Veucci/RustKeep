@@ -24,6 +24,12 @@ pub struct FileItem {
     pub folder_id: Option<String>,
     #[serde(default)]
     pub starred: i64,
+    #[serde(default)]
+    pub upload_link_id: Option<String>,
+    #[serde(default)]
+    pub uploader: Option<String>,
+    #[serde(default)]
+    pub upload_note: Option<String>,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -39,6 +45,8 @@ pub struct Folder {
     pub share_token: Option<String>,
     #[serde(default)]
     pub share_expires: Option<i64>,
+    #[serde(default)]
+    pub share_uploads: i64,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -105,6 +113,11 @@ pub fn trail(folders: &[Folder], from: Option<&str>) -> Vec<Folder> {
     }
     out.reverse();
     out
+}
+
+pub fn folder_path(folders: &[Folder], id: Option<&str>) -> String {
+    let names: Vec<String> = trail(folders, id).into_iter().map(|f| f.name).collect();
+    if names.is_empty() { "My Drive".into() } else { format!("My Drive / {}", names.join(" / ")) }
 }
 
 const TEXT_LIMIT: i64 = 2 << 20;
@@ -205,11 +218,11 @@ mod tests {
     use super::*;
 
     fn dir(id: &str, parent: Option<&str>) -> Folder {
-        Folder { id: id.into(), name: id.into(), parent_id: parent.map(Into::into), created: 0, starred: 0, share_token: None, share_expires: None }
+        Folder { id: id.into(), name: id.into(), parent_id: parent.map(Into::into), created: 0, starred: 0, share_token: None, share_expires: None, share_uploads: 0 }
     }
 
     fn file(name: &str, mime: &str) -> FileItem {
-        FileItem { id: name.into(), name: name.into(), mime: mime.into(), size: 0, created: 0, share_token: None, share_expires: None, archived: 0, folder_id: None, starred: 0 }
+        FileItem { id: name.into(), name: name.into(), mime: mime.into(), size: 0, created: 0, share_token: None, share_expires: None, archived: 0, folder_id: None, starred: 0, upload_link_id: None, uploader: None, upload_note: None }
     }
 
     #[test]

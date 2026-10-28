@@ -14,6 +14,7 @@ mod migrate;
 mod notes;
 mod projects;
 mod reminders;
+mod requests;
 mod reset;
 mod signup;
 mod storage;
@@ -95,12 +96,17 @@ CREATE TABLE IF NOT EXISTS notes (
 CREATE TABLE IF NOT EXISTS folders (
   id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), parent_id TEXT REFERENCES folders(id),
   name TEXT NOT NULL, created INTEGER NOT NULL DEFAULT (unixepoch()), starred INTEGER NOT NULL DEFAULT 0,
-  share_token TEXT UNIQUE, share_expires INTEGER);
+  share_token TEXT UNIQUE, share_expires INTEGER, share_uploads INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS files (
   id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), project_id TEXT REFERENCES projects(id),
   folder_id TEXT REFERENCES folders(id), name TEXT NOT NULL, mime TEXT NOT NULL,
   size INTEGER NOT NULL, key TEXT NOT NULL, created INTEGER NOT NULL DEFAULT (unixepoch()),
-  share_token TEXT UNIQUE, share_expires INTEGER, archived INTEGER NOT NULL DEFAULT 0, starred INTEGER NOT NULL DEFAULT 0);
+  share_token TEXT UNIQUE, share_expires INTEGER, archived INTEGER NOT NULL DEFAULT 0, starred INTEGER NOT NULL DEFAULT 0,
+  upload_link_id TEXT REFERENCES upload_links(id), uploader TEXT, upload_note TEXT);
+CREATE TABLE IF NOT EXISTS upload_links (
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), folder_id TEXT REFERENCES folders(id),
+  token TEXT NOT NULL UNIQUE, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', password TEXT,
+  expires INTEGER, active INTEGER NOT NULL DEFAULT 1, created INTEGER NOT NULL DEFAULT (unixepoch()));
 CREATE TABLE IF NOT EXISTS vault (
   id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), name TEXT NOT NULL, value TEXT NOT NULL,
   note TEXT NOT NULL DEFAULT '', created INTEGER NOT NULL DEFAULT (unixepoch()));
@@ -127,6 +133,7 @@ CREATE TABLE IF NOT EXISTS google_links (
 CREATE INDEX IF NOT EXISTS notes_user ON notes(user_id);
 CREATE INDEX IF NOT EXISTS files_user ON files(user_id, folder_id);
 CREATE INDEX IF NOT EXISTS folders_parent ON folders(parent_id);
+CREATE INDEX IF NOT EXISTS upload_links_user ON upload_links(user_id);
 CREATE INDEX IF NOT EXISTS reminders_due ON reminders(sent, remind_at);
 CREATE INDEX IF NOT EXISTS tasks_project ON tasks(project_id, column_id, position);
 CREATE INDEX IF NOT EXISTS subtasks_task ON subtasks(task_id, position);
@@ -200,6 +207,11 @@ fn api() -> Router<Arc<App>> {
         .route("/api/folders/{id}/share", post(folders::share).delete(folders::unshare))
         .route("/api/public/folders/{token}", get(folders::public_list))
         .route("/api/public/folders/{token}/files/{id}", get(folders::public_raw))
+        .route("/api/public/folders/{token}/upload", post(folders::public_upload).layer(DefaultBodyLimit::disable()))
+        .route("/api/upload-links", get(requests::list).post(requests::create))
+        .route("/api/upload-links/{id}", put(requests::update).delete(requests::remove))
+        .route("/api/public/uploads/{token}", get(requests::public_get).post(requests::public_upload).layer(DefaultBodyLimit::disable()))
+        .route("/api/public/uploads/{token}/unlock", post(requests::unlock))
         .route("/api/vault", get(vault::list).post(vault::create))
         .route("/api/vault/{id}", get(vault::reveal).delete(vault::remove))
         .route("/api/reminders", get(reminders::list).post(reminders::create))

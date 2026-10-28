@@ -62,10 +62,13 @@ pub struct FileItem {
     archived: i64,
     folder_id: Option<String>,
     starred: i64,
+    upload_link_id: Option<String>,
+    uploader: Option<String>,
+    upload_note: Option<String>,
 }
 
-pub const FILE_COLUMNS: &str =
-    "id, name, mime, size, project_id, created, share_token, share_expires, archived, folder_id, starred";
+pub const FILE_COLUMNS: &str = "id, name, mime, size, project_id, created, share_token, share_expires, archived, folder_id, starred, \
+     upload_link_id, uploader, upload_note";
 
 pub async fn list(app: St, user: User, Query(q): Query<ListQ>) -> Res<Json<Vec<FileItem>>> {
     let sql = format!(
@@ -75,13 +78,13 @@ pub async fn list(app: St, user: User, Query(q): Query<ListQ>) -> Res<Json<Vec<F
     Ok(Json(rows))
 }
 
-async fn taken(app: &App, user: &User, folder: Option<&str>, name: &str, except: &str) -> Res<Option<String>> {
+async fn taken(app: &App, user_id: &str, folder: Option<&str>, name: &str, except: &str) -> Res<Option<String>> {
     let mut rows = app
         .db
         .query(
             "SELECT id FROM files WHERE user_id = ?1 AND name = ?2 AND id <> ?4 \
              AND folder_id IS (SELECT id FROM folders WHERE id = ?3 AND user_id = ?1) LIMIT 1",
-            params![user.id.as_str(), name, folder, except],
+            params![user_id, name, folder, except],
         )
         .await?;
     Ok(rows.next().await?.map(|r| r.get::<String>(0)).transpose()?)
@@ -94,21 +97,28 @@ fn numbered(name: &str, n: u32) -> String {
     }
 }
 
-async fn free_name(app: &App, user: &User, folder: Option<&str>, name: &str) -> Res<String> {
+async fn free_name(app: &App, user_id: &str, folder: Option<&str>, name: &str) -> Res<String> {
     let mut n = 1;
     loop {
         let candidate = numbered(name, n);
-        if taken(app, user, folder, &candidate, "").await?.is_none() {
+        if taken(app, user_id, folder, &candidate, "").await?.is_none() {
             return Ok(candidate);
         }
         n += 1;
     }
 }
 
+pub async fn unique_name(app: &App, user_id: &str, folder: Option<&str>, name: &str) -> Res<String> {
+    if taken(app, user_id, folder, name, "").await?.is_none() {
+        return Ok(name.to_owned());
+    }
+    free_name(app, user_id, folder, name).await
+}
+
 pub async fn conflicts(app: St, user: User, Json(r): Json<ConflictQ>) -> Res<Json<Vec<String>>> {
     let mut found = Vec::new();
     for name in r.names {
-        if taken(&app, &user, r.folder.as_deref(), &name, "").await?.is_some() {
+        if taken(&app, &user.id, r.folder.as_deref(), &name, "").await?.is_some() {
             found.push(name);
         }
     }
@@ -157,13 +167,13 @@ pub async fn upload(app: St, user: User, Query(q): Query<ListQ>, mut mp: Multipa
         let mime = field.content_type().unwrap_or("application/octet-stream").to_owned();
         let key = token();
         let size = app.storage.save(&key, &mut field).await?;
-        let existing = taken(&app, &user, folder, &name, "").await?;
+        let existing = taken(&app, &user.id, folder, &name, "").await?;
         if let Some(id) = existing.as_deref().filter(|_| q.replace) {
             replace_content(&app, id, &key, &mime, size).await?;
             saved.push(json!({ "id": id, "name": name }));
             continue;
         }
-        let name = if existing.is_some() { free_name(&app, &user, folder, &name).await? } else { name };
+        let name = if existing.is_some() { free_name(&app, &user.id, folder, &name).await? } else { name };
         let id = insert(&app, &user, NewFile { project: q.project.as_deref(), folder, name: &name, mime: &mime, size, key: &key }).await?;
         saved.push(json!({ "id": id, "name": name }));
     }
@@ -218,8 +228,7 @@ pub async fn convert(app: St, user: User, Path(id): Path<String>, Json(r): Json<
         .await?
         .map_err(|_| err(StatusCode::UNPROCESSABLE_ENTITY, "This file could not be converted"))?;
     let folder = f.folder_id.as_deref();
-    let name = format!("{stem}.{}", r.to);
-    let name = if taken(&app, &user, folder, &name, "").await?.is_some() { free_name(&app, &user, folder, &name).await? } else { name };
+    let name = unique_name(&app, &user.id, folder, &format!("{stem}.{}", r.to)).await?;
     let key = token();
     let size = app.storage.save_bytes(&key, &out).await?;
     let new = NewFile { project: f.project_id.as_deref(), folder, name: &name, mime: convert::mime(&r.to), size, key: &key };
@@ -289,7 +298,7 @@ pub async fn public_raw(app: St, Path(t): Path<String>, req: Request) -> Res<Res
 }
 
 pub async fn update(app: St, user: User, Path(id): Path<String>, Json(r): Json<Edit>) -> Res<Json<Value>> {
-    if taken(&app, &user, r.parent.as_deref(), r.clean_name()?, &id).await?.is_some() {
+    if taken(&app, &user.id, r.parent.as_deref(), r.clean_name()?, &id).await?.is_some() {
         return Err(err(StatusCode::CONFLICT, "A file with this name already exists in this folder"));
     }
     exec(
@@ -318,6 +327,8 @@ pub async fn remove(app: St, user: User, Path(id): Path<String>) -> Res<Json<Val
 #[derive(Deserialize)]
 pub struct ShareReq {
     pub expires: Option<i64>,
+    #[serde(default)]
+    pub uploads: bool,
 }
 
 pub async fn set_share(app: &App, table: &str, id: &str, user: &User, expires: Option<i64>) -> Res<Json<Value>> {

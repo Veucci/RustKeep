@@ -20,6 +20,7 @@ use crate::components::ui::alert_dialog::{
 };
 use crate::components::ui::button::{Button, ButtonVariant};
 use crate::components::ui::card::{Card, CardContent, CardDescription, CardHeader, CardTitle};
+use crate::components::ui::checkbox::Checkbox;
 use crate::components::ui::date_picker::DateTimePicker;
 use crate::components::ui::dialog::{ControlledDialog, DialogBody, DialogTitle};
 use crate::components::ui::input::{Input, InputType};
@@ -416,7 +417,7 @@ pub fn PinGate(children: ChildrenFn) -> impl IntoView {
     }
 }
 
-fn qr_svg(link: &str) -> String {
+pub fn qr_svg(link: &str) -> String {
     let Ok(code) = qrcode::QrCode::new(link) else { return String::new() };
     code.render::<qrcode::render::svg::Color>().quiet_zone(false).build()
 }
@@ -427,6 +428,7 @@ pub fn ShareDialog(
     #[prop(into)] api_path: String,
     link_prefix: &'static str,
     token: RwSignal<Option<String>>,
+    #[prop(default = None)] uploads: Option<RwSignal<bool>>,
 ) -> impl IntoView {
     let ui = use_ui();
     let api_path = StoredValue::new(api_path);
@@ -434,7 +436,8 @@ pub fn ShareDialog(
 
     let create = move |_| {
         spawn_local(async move {
-            let body = json!({ "expires": parse_local(&expires.get_untracked()) });
+            let allow = uploads.is_some_and(|u| u.get_untracked());
+            let body = json!({ "expires": parse_local(&expires.get_untracked()), "uploads": allow });
             if let Some(v) = ui.run(api::post::<Value>(&api_path.get_value(), &body)).await {
                 token.set(v["token"].as_str().map(str::to_owned));
             }
@@ -456,6 +459,9 @@ pub fn ShareDialog(
                     let copy_link = link.clone();
                     view! {
                         <p class="text-sm text-muted-foreground">"Anyone with this link can access it."</p>
+                        {uploads.map(|on| view! {
+                            <p class="text-sm font-medium">{if on.get_untracked() { "Uploads allowed" } else { "Uploads not allowed" }}</p>
+                        })}
                         <div class="self-center p-3 bg-white rounded-lg border size-48 [&_svg]:size-full" inner_html=qr_svg(&link) />
                         <Input readonly=true bind_value=RwSignal::new(link) />
                         <div class="flex gap-2 justify-end">
@@ -467,6 +473,15 @@ pub fn ShareDialog(
                 }
                 None => {
                     view! {
+                        {uploads.map(|on| view! {
+                            <label class="flex gap-3 items-center p-3 rounded-lg border cursor-pointer">
+                                <Checkbox checked=on on_checked_change=Callback::new(move |v| on.set(v)) aria_label="Allow uploads" />
+                                <span class="flex flex-col gap-0.5">
+                                    <span class="text-sm font-medium">"Allow uploads"</span>
+                                    <span class="text-xs text-muted-foreground">"People with the link can upload files here. They can't rename or delete anything."</span>
+                                </span>
+                            </label>
+                        })}
                         <Label>"Expiration date (optional)"</Label>
                         <DateTimePicker bind_value=expires />
                         <div class="flex justify-end">

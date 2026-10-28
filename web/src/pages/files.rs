@@ -2,7 +2,7 @@ use std::cmp::Reverse;
 
 use icons::{
     Archive, ArchiveRestore, ChevronRight, Copy, Download, EllipsisVertical, Eye, FileOutput, Folder as FolderIcon, FolderInput,
-    FolderOpen, FolderPlus, Info, LayoutGrid, Link, List, Pencil, Share2, Star, StarOff, Trash2, Upload, X,
+    FolderOpen, FolderPlus, Inbox, Info, LayoutGrid, Link, List, Pencil, Share2, Star, StarOff, Trash2, Upload, X,
 };
 use leptos::ev::{self, SubmitEvent};
 use leptos::html;
@@ -24,13 +24,15 @@ use crate::components::ui::input::Input;
 use crate::components::ui::label::Label;
 use crate::components::ui::spinner::Spinner;
 use crate::id::Id;
-use crate::pages::drive::{FileItem, Folder, Kind, KindIcon, Preview, trail};
+use crate::pages::drive::{FileItem, Folder, Kind, KindIcon, Preview, folder_path, trail};
+use crate::pages::requests::{RequestDialog, RequestList, UploadLink};
 use crate::widgets::{
     Choice, ListSkeleton, Modal, Options, PageHeader, SearchBox, Segmented, ShareDialog, SortSelect, Ui, copy, fmt_date, fmt_size,
     fmt_time, has, query_state, use_ui,
 };
 
-const TABS: Options = &[("", "My Drive"), ("recent", "Recent"), ("starred", "Starred"), ("shared", "Shared"), ("archived", "Archived")];
+const TABS: Options =
+    &[("", "My Drive"), ("recent", "Recent"), ("starred", "Starred"), ("shared", "Shared"), ("requests", "Requests"), ("archived", "Archived")];
 const PROJECT_TABS: Options = &[("", "Files"), ("archived", "Archived")];
 const SORTS: Options =
     &[("name", "Name A-Z"), ("newest", "Newest"), ("oldest", "Oldest"), ("size", "Largest"), ("small", "Smallest")];
@@ -118,6 +120,7 @@ enum Scope {
     Recent,
     Starred,
     Shared,
+    Requests,
     Archived,
     Project,
 }
@@ -128,6 +131,7 @@ impl Scope {
             "recent" => Scope::Recent,
             "starred" => Scope::Starred,
             "shared" => Scope::Shared,
+            "requests" => Scope::Requests,
             "archived" => Scope::Archived,
             _ if project => Scope::Project,
             "" => Scope::Folder(None),
@@ -140,6 +144,7 @@ impl Scope {
             Scope::Recent => "recent",
             Scope::Starred => "starred",
             Scope::Shared => "shared",
+            Scope::Requests => "requests",
             Scope::Archived => "archived",
             _ => "",
         }
@@ -153,6 +158,7 @@ impl Scope {
             Scope::Starred => f.starred == 1,
             Scope::Shared => f.share_token.is_some(),
             Scope::Recent | Scope::Project => true,
+            Scope::Requests => false,
         }
     }
 
@@ -173,6 +179,7 @@ impl Scope {
             Scope::Starred => ("Nothing starred", "Star files and folders to find them quickly."),
             Scope::Shared => ("Nothing shared", "Items with a public link show up here."),
             Scope::Archived => ("No archived files", "Archived files are kept here until you restore them."),
+            Scope::Requests => ("", ""),
         }
     }
 }
@@ -216,6 +223,7 @@ enum Dialog {
     Move(Vec<String>),
     Share(String),
     Convert(Vec<String>),
+    Request(Option<String>),
     Conflict(Vec<File>, Option<String>, Vec<String>),
 }
 
@@ -225,6 +233,7 @@ struct Drive {
     project: Option<Id>,
     files: LocalResource<Vec<FileItem>>,
     folders: LocalResource<Vec<Folder>>,
+    links: LocalResource<Vec<UploadLink>>,
     scope: Memo<Scope>,
     go: Callback<String>,
     selected: RwSignal<Vec<String>>,
@@ -428,12 +437,19 @@ pub fn FileManager(#[prop(optional)] project: Option<Id>, #[prop(optional)] arch
         async move { ui.run(api::get::<Vec<FileItem>>(&path)).await.unwrap_or_default() }
     });
     let folders = LocalResource::new(move || async move { ui.run(api::get::<Vec<Folder>>("/api/folders")).await.unwrap_or_default() });
+    let links = LocalResource::new(move || async move {
+        if project.is_some() {
+            return Vec::new();
+        }
+        ui.run(api::get::<Vec<UploadLink>>("/api/upload-links")).await.unwrap_or_default()
+    });
     let scope = Memo::new(move |_| if archive_only { Scope::Archived } else { Scope::new(&at.get(), project.is_some()) });
     let d = Drive {
         ui,
         project,
         files,
         folders,
+        links,
         scope,
         go: Callback::new(move |id: String| {
             q.set(String::new());
@@ -502,12 +518,14 @@ pub fn FileManager(#[prop(optional)] project: Option<Id>, #[prop(optional)] arch
     let can_folder = project.is_none() && !archive_only;
     let tabs = if project.is_some() { PROJECT_TABS } else { TABS };
     let grid = Signal::derive(move || layout.get() == "grid");
+    let requests = move || scope.with(|s| *s == Scope::Requests);
+    let folder_list = Signal::derive(move || d.all_folders());
 
     view! {
         <div
             class="flex relative flex-col gap-4"
             on:dragenter=move |ev: DragEvent| {
-                if can_upload && has_files(&ev) {
+                if can_upload && !requests() && has_files(&ev) {
                     over.set(true);
                 }
             }
@@ -516,11 +534,15 @@ pub fn FileManager(#[prop(optional)] project: Option<Id>, #[prop(optional)] arch
                 <Show when=move || !archive_only fallback=|| view! { <span /> }>
                     <Segmented options=tabs value=tab on_change=set_at />
                 </Show>
-                <div class="flex gap-2 items-center">
+                <div class="flex gap-2 items-center" class=("hidden", requests)>
                     <Show when=move || can_folder>
                         <Button variant=ButtonVariant::Outline on:click=move |_| d.dialog.set(Some(Dialog::NewFolder))>
                             <FolderPlus />
                             <span class="hidden sm:inline">"New folder"</span>
+                        </Button>
+                        <Button variant=ButtonVariant::Outline attr:title="Collect files from anyone with a link" on:click=move |_| d.dialog.set(Some(Dialog::Request(d.current())))>
+                            <Inbox />
+                            <span class="hidden sm:inline">"Request files"</span>
                         </Button>
                     </Show>
                     <Show when=move || can_upload>
@@ -532,8 +554,11 @@ pub fn FileManager(#[prop(optional)] project: Option<Id>, #[prop(optional)] arch
                     </Show>
                 </div>
             </div>
+            <Show when=requests>
+                <RequestList links folders=folder_list go=d.go />
+            </Show>
             <Show when=move || d.selected.with(Vec::is_empty) fallback=|| view! { <BulkBar /> }>
-                <div class="flex flex-wrap gap-2 justify-between items-center min-h-[2.75rem]">
+                <div class="flex flex-wrap gap-2 justify-between items-center min-h-[2.75rem]" class=("hidden", requests)>
                     <Crumbs searching />
                     <div class="flex flex-wrap gap-2 items-center">
                         <SearchBox value=q placeholder="Search files  /" />
@@ -547,6 +572,9 @@ pub fn FileManager(#[prop(optional)] project: Option<Id>, #[prop(optional)] arch
             </Show>
             {move || {
                 let (dirs, docs) = (shown_folders.get(), shown_files.get());
+                if requests() {
+                    return ().into_any();
+                }
                 if files.get().is_none() || folders.get().is_none() {
                     return view! { <Card class="overflow-hidden gap-0 py-0"><ListSkeleton rows=3 /></Card> }.into_any();
                 }
@@ -569,7 +597,9 @@ pub fn FileManager(#[prop(optional)] project: Option<Id>, #[prop(optional)] arch
                     view! { <ListView dirs docs /> }.into_any()
                 }
             }}
-            <StorageLine />
+            <Show when=move || !requests()>
+                <StorageLine />
+            </Show>
             <Show when=move || over.get()>
                 <div
                     class="flex absolute inset-0 z-30 flex-col gap-2 justify-center items-center rounded-xl border-2 border-dashed backdrop-blur-sm border-primary bg-background/80 animate-in fade-in-0"
@@ -609,6 +639,7 @@ fn Crumbs(searching: Signal<bool>) -> impl IntoView {
         Scope::Recent => "Recent",
         Scope::Starred => "Starred",
         Scope::Shared => "Shared with a link",
+        Scope::Requests => "File requests",
         Scope::Archived => "Archived",
         Scope::Project => "Project files",
         Scope::Folder(_) => "",
@@ -951,6 +982,9 @@ fn ItemMenu() -> impl IntoView {
                     </Show>
                     <div class="my-1 h-px bg-border" />
                     <MenuItem label="Share" action=act(|d, e| d.dialog.set(Some(Dialog::Share(e.id().to_owned())))) ><Share2 /></MenuItem>
+                    <Show when=move || is_dir && d.project.is_none()>
+                        <MenuItem label="Request files" action=act(|d, e| d.dialog.set(Some(Dialog::Request(Some(e.id().to_owned()))))) ><Inbox /></MenuItem>
+                    </Show>
                     <MenuItem label="Rename" action=act(|d, e| d.dialog.set(Some(Dialog::Rename(e.id().to_owned())))) ><Pencil /></MenuItem>
                     <MenuItem label="Move to" action=act(|d, e| d.dialog.set(Some(Dialog::Move(vec![e.id().to_owned()])))) ><FolderInput /></MenuItem>
                     <MenuItem label=star_label action=act(|d, e| { let on = !e.starred(); d.save(vec![e], move |x| x.starred = on); })>
@@ -981,8 +1015,7 @@ fn Row(label: &'static str, children: Children) -> impl IntoView {
 }
 
 fn location(d: Drive, parent: Option<&str>) -> String {
-    let names: Vec<String> = trail(&d.all_folders(), parent).into_iter().map(|f| f.name).collect();
-    if names.is_empty() { "My Drive".into() } else { format!("My Drive / {}", names.join(" / ")) }
+    folder_path(&d.all_folders(), parent)
 }
 
 fn sharing(token: &Option<String>, expires: Option<i64>) -> String {
@@ -1000,7 +1033,10 @@ fn folder_facts(d: Drive, f: &Folder) -> AnyView {
     let inside: Vec<&FileItem> = files.iter().filter(|x| x.folder_id.as_ref().is_some_and(|p| ids.contains(p))).collect();
     let total: i64 = inside.iter().map(|x| x.size).sum();
     let contents = format!("{} folder(s), {} file(s)", ids.len() - 1, inside.len());
-    let (place, created, shared) = (location(d, f.parent_id.as_deref()), fmt_time(f.created), sharing(&f.share_token, f.share_expires));
+    let (place, created, mut shared) = (location(d, f.parent_id.as_deref()), fmt_time(f.created), sharing(&f.share_token, f.share_expires));
+    if f.share_token.is_some() && f.share_uploads == 1 {
+        shared.push_str(", uploads allowed");
+    }
     view! {
         <Row label="Type">"Folder"</Row>
         <Row label="Contents">{contents}</Row>
@@ -1019,11 +1055,16 @@ fn file_facts(d: Drive, f: &FileItem) -> AnyView {
     let kind = format!("{} ({mime})", kind.label());
     let size = format!("{} ({} bytes)", fmt_size(f.size), f.size);
     let (place, created, shared) = (location(d, f.folder_id.as_deref()), fmt_time(f.created), sharing(&f.share_token, f.share_expires));
+    let request = d.links.get().unwrap_or_default().into_iter().find(|l| f.upload_link_id.as_ref() == Some(&l.id)).map(|l| l.title);
+    let sender = f.uploader.clone().map(|who| request.map_or(who.clone(), |t| format!("{who} via \"{t}\"")));
+    let message = f.upload_note.clone();
     view! {
         <Row label="Type">{kind}</Row>
         <Row label="Size">{size}</Row>
         <Row label="Location">{place}</Row>
         <Row label="Uploaded">{created}</Row>
+        {sender.map(|s| view! { <Row label="Uploaded by">{s}</Row> })}
+        {message.map(|m| view! { <Row label="Message">{m}</Row> })}
         <Row label="Status">{status}</Row>
         <Row label="Sharing">{shared}</Row>
     }
@@ -1101,6 +1142,10 @@ fn Dialogs() -> impl IntoView {
                 Dialog::Move(ids) => view! { <MoveDialog open ids /> }.into_any(),
                 Dialog::Share(id) => share_dialog(d, open, &id),
                 Dialog::Convert(ids) => view! { <ConvertDialog open ids /> }.into_any(),
+                Dialog::Request(folder) => {
+                    let folders = Signal::derive(move || d.all_folders());
+                    view! { <RequestDialog open folders link=None folder on_saved=Callback::new(move |()| d.links.refetch()) /> }.into_any()
+                }
                 Dialog::Conflict(files, folder, names) => view! { <ConflictDialog open files folder names /> }.into_any(),
             }
         })}
@@ -1110,6 +1155,10 @@ fn Dialogs() -> impl IntoView {
 fn share_dialog(d: Drive, open: RwSignal<bool>, id: &str) -> AnyView {
     let Some(e) = untrack(|| d.entry(id)) else { return ().into_any() };
     let token = RwSignal::new(e.token());
+    let uploads = match &e {
+        Entry::Dir(f) => Some(RwSignal::new(f.share_uploads == 1)),
+        Entry::Doc(_) => None,
+    };
     Effect::new(move |prev: Option<Option<String>>| {
         let now = token.get();
         if prev.is_some_and(|p| p != now) {
@@ -1118,7 +1167,7 @@ fn share_dialog(d: Drive, open: RwSignal<bool>, id: &str) -> AnyView {
         now
     });
     let prefix = if e.is_dir() { "/d/" } else { "/api/public/files/" };
-    view! { <ShareDialog open api_path=format!("{}/share", e.api()) link_prefix=prefix token /> }.into_any()
+    view! { <ShareDialog open api_path=format!("{}/share", e.api()) link_prefix=prefix token uploads /> }.into_any()
 }
 
 #[component]

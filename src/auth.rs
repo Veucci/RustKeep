@@ -81,7 +81,7 @@ struct LoginRow {
     approved: i64,
 }
 
-fn login_allowed(app: &App, user_id: &str) -> bool {
+pub fn login_allowed(app: &App, user_id: &str) -> bool {
     let now = unix_now();
     let mut attempts = app.login_attempts.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     attempts.retain(|_, (_, start)| now - *start < LOGIN_WINDOW);

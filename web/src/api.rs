@@ -8,7 +8,9 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use crate::id::Id;
-use web_sys::{AbortController, File, FileList, FormData};
+use wasm_bindgen::JsCast;
+use wasm_bindgen::closure::Closure;
+use web_sys::{AbortController, File, FileList, FormData, ProgressEvent, XmlHttpRequest};
 
 #[derive(Clone, Debug)]
 pub struct ApiError {
@@ -98,6 +100,32 @@ pub async fn upload(files: Vec<File>, project: Option<Id>, folder: Option<String
     let path = format!("/api/files?{}", query.join("&"));
     let req = Request::post(&url(&path)).body(form).map_err(|e| ApiError { status: 0, msg: e.to_string() })?;
     read(req.send().await).await
+}
+
+fn error_text(status: u16, body: &str) -> String {
+    match status {
+        0 => "Connection lost, the upload did not finish".to_owned(),
+        _ => serde_json::from_str::<Value>(body)
+            .ok()
+            .and_then(|v| v["error"].as_str().map(str::to_owned))
+            .unwrap_or_else(|| format!("Request failed ({status})")),
+    }
+}
+
+pub fn post_with_progress(path: &str, form: &FormData, on_progress: impl Fn(f64) + 'static, on_done: impl FnOnce(ApiResult<()>) + 'static) {
+    let Ok(xhr) = XmlHttpRequest::new() else { return on_done(Err(ApiError { status: 0, msg: "Uploads are not supported".into() })) };
+    let progress = Closure::<dyn Fn(ProgressEvent)>::new(move |e: ProgressEvent| on_progress(e.loaded())).into_js_value();
+    if let Ok(upload) = xhr.upload() {
+        upload.set_onprogress(Some(progress.unchecked_ref()));
+    }
+    let request = xhr.clone();
+    let done = Closure::once_into_js(move || {
+        let status = request.status().unwrap_or(0);
+        let body = request.response_text().ok().flatten().unwrap_or_default();
+        on_done(if (200..300).contains(&status) { Ok(()) } else { Err(ApiError { status, msg: error_text(status, &body) }) });
+    });
+    xhr.set_onloadend(Some(done.unchecked_ref()));
+    let _ = xhr.open("POST", &url(path)).and_then(|()| xhr.send_with_opt_form_data(Some(form)));
 }
 
 thread_local! {

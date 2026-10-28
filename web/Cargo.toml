@@ -21,7 +21,7 @@ js-sys = "0.3"
 web-sys = { version = "0.3", features = [
   "AbortController", "AbortSignal", "console", "Clipboard", "ClipboardEvent", "DocumentFragment", "HtmlDocument", "HtmlTemplateElement", "Node", "Range", "Selection", "CssStyleDeclaration", "DataTransfer", "DomTokenList", "DragEvent", "Element",
   "File", "FileList", "FormData", "HtmlInputElement", "HtmlTextAreaElement", "Location", "MediaQueryList",
-  "Navigator", "NodeList", "Storage",
+  "Navigator", "NodeList", "ProgressEvent", "Storage", "XmlHttpRequest", "XmlHttpRequestEventTarget", "XmlHttpRequestUpload",
 ] }
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 
