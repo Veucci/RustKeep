@@ -1,3 +1,4 @@
+use leptos::either::Either;
 use leptos::html;
 use leptos::prelude::*;
 use tw_merge::tw_merge;
@@ -25,7 +26,7 @@ pub fn Textarea(
     );
 
     match bind_value {
-        Some(signal) => view! {
+        Some(signal) => Either::Left(view! {
             <textarea
                 data-name="Textarea"
                 class=merged_class
@@ -40,9 +41,8 @@ pub fn Textarea(
                 bind:value=signal
                 node_ref=node_ref
             />
-        }
-        .into_any(),
-        None => view! {
+        }),
+        None => Either::Right(view! {
             <textarea
                 data-name="Textarea"
                 class=merged_class
@@ -56,7 +56,6 @@ pub fn Textarea(
                 rows=rows
                 node_ref=node_ref
             />
-        }
-        .into_any(),
+        }),
     }
 }

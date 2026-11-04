@@ -19,6 +19,7 @@ const ROW: &str = "flex gap-3 items-center px-4 py-2.5 w-full text-left border-b
 struct Lane {
     id: String,
     name: String,
+    done: i64,
 }
 
 #[derive(Clone, Deserialize)]
@@ -55,7 +56,7 @@ impl SharedProject {
     }
 
     fn is_done(&self, card: &BoardTask) -> bool {
-        self.columns.last().is_some_and(|c| c.id == card.column_id)
+        self.columns.iter().any(|c| c.id == card.column_id && c.done == 1)
     }
 }
 

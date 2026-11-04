@@ -33,7 +33,7 @@ const EVENT_SELECT: &str = "SELECT id, title, description, location, start_at, e
 
 const ITEM_SELECT: &str = "SELECT 'task' AS kind, t.id, t.title, t.due AS day, NULL AS at, p.id AS project_id, t.id AS task_id, \
        NULL AS note_id, p.name AS context, \
-       t.column_id = (SELECT c.id FROM board_columns c WHERE c.project_id = p.id ORDER BY c.position DESC LIMIT 1) AS done \
+       (SELECT c.done FROM board_columns c WHERE c.id = t.column_id) AS done \
      FROM tasks t JOIN projects p ON p.id = t.project_id WHERE p.user_id = ?1 AND p.archived = 0 AND t.due IS NOT NULL \
      UNION ALL \
      SELECT 'subtask', s.id, s.title, s.due, NULL, p.id, t.id, NULL, p.name || ' / ' || t.title, s.done \

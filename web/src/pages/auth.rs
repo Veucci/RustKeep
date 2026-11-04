@@ -6,7 +6,7 @@ use leptos_router::hooks::use_params_map;
 use serde_json::{Value, json};
 
 use crate::api;
-use crate::components::ui::button::Button;
+use crate::components::ui::button::{Button, ButtonLink};
 use crate::components::ui::card::{Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle};
 use crate::components::ui::input::{Input, InputType};
 use crate::components::ui::label::Label;
@@ -189,7 +189,7 @@ pub fn ResetPassword() -> impl IntoView {
                 fallback=|| view! {
                     <CardContent class="flex flex-col gap-3 text-sm">
                         <p class="text-muted-foreground">"Your password has been changed. All devices were signed out."</p>
-                        <Button class="w-full" href=api::url("/login")>"Sign in"</Button>
+                        <ButtonLink class="w-full" href=api::url("/login")>"Sign in"</ButtonLink>
                     </CardContent>
                 }
             >

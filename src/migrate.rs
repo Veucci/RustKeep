@@ -109,8 +109,18 @@ async fn snapshot(db: &Connection, path: Option<&Path>) -> Res<()> {
     Ok(())
 }
 
+const MARK_DONE_COLUMNS: &str = "UPDATE board_columns SET done = 1 WHERE id = (\
+     SELECT c.id FROM board_columns c WHERE c.project_id = board_columns.project_id \
+     ORDER BY lower(trim(c.name)) = 'done' DESC, c.position DESC LIMIT 1)";
+
+async fn lacks_done_flag(db: &Connection) -> Res<bool> {
+    let existing = columns(db, "board_columns").await?;
+    Ok(!existing.is_empty() && !existing.iter().any(|c| c == "done"))
+}
+
 pub async fn migrate(db: &Connection, schema: &str, backup: Option<&Path>) -> Res<usize> {
     db.execute("PRAGMA foreign_keys = OFF", ()).await?;
+    let mark_done = lacks_done_flag(db).await?;
     let changed = outdated(db, schema).await?;
     snapshot(db, backup.filter(|_| !changed.is_empty())).await?;
     let tx = db.transaction().await?;
@@ -119,6 +129,9 @@ pub async fn migrate(db: &Connection, schema: &str, backup: Option<&Path>) -> Re
     }
     tx.execute_batch(schema).await?;
     assign_uuids(&tx, schema).await?;
+    if mark_done {
+        tx.execute(MARK_DONE_COLUMNS, ()).await?;
+    }
     tx.commit().await?;
     Ok(changed.len())
 }
@@ -146,6 +159,33 @@ mod tests {
         assert_eq!(row.get::<String>(0).unwrap(), "a");
         assert_eq!(row.get::<i64>(1).unwrap(), 7);
         assert_eq!(strings(&db, "SELECT name FROM sqlite_master WHERE type = 'index'", ()).await.ok().unwrap(), ["t_title"]);
+    }
+
+    const BOARD_V1: &str = "CREATE TABLE IF NOT EXISTS board_columns (
+          id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT NOT NULL, position INTEGER NOT NULL);";
+    const BOARD_V2: &str = "CREATE TABLE IF NOT EXISTS board_columns (
+          id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT NOT NULL, position INTEGER NOT NULL,
+          done INTEGER NOT NULL DEFAULT 0);";
+
+    #[tokio::test]
+    async fn marks_the_done_column_once_when_the_flag_is_added() {
+        let db = libsql::Builder::new_local(":memory:").build().await.unwrap().connect().unwrap();
+        migrate(&db, BOARD_V1, None).await.unwrap_or_else(|e| panic!("{}", e.1));
+        let named = uuid();
+        let last = uuid();
+        let sql = format!(
+            "INSERT INTO board_columns VALUES ('{named}', 'moved', ' done ', 0), ('{last}', 'moved', 'Later', 1), \
+             ('{}', 'renamed', 'Open', 0), ('{}', 'renamed', 'Shipped', 1);",
+            uuid(),
+            uuid()
+        );
+        db.execute_batch(&sql).await.unwrap();
+        migrate(&db, BOARD_V2, None).await.unwrap_or_else(|e| panic!("{}", e.1));
+        let flagged = "SELECT name FROM board_columns WHERE done = 1 ORDER BY project_id";
+        assert_eq!(strings(&db, flagged, ()).await.ok().unwrap(), [" done ", "Shipped"]);
+        db.execute("UPDATE board_columns SET done = 0", ()).await.unwrap();
+        migrate(&db, BOARD_V2, None).await.unwrap_or_else(|e| panic!("{}", e.1));
+        assert!(strings(&db, flagged, ()).await.ok().unwrap().is_empty());
     }
 
     const OLD_IDS: &str = "CREATE TABLE IF NOT EXISTS p (id INTEGER PRIMARY KEY, name TEXT);

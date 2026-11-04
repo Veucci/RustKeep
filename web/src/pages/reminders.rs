@@ -12,7 +12,7 @@ use crate::api;
 use crate::id::Id;
 use crate::md;
 use crate::components::ui::badge::{Badge, BadgeVariant};
-use crate::components::ui::button::{Button, ButtonSize, ButtonVariant};
+use crate::components::ui::button::{Button, ButtonLink, ButtonSize, ButtonVariant};
 use crate::components::ui::card::{Card, CardContent};
 use crate::components::ui::date_picker::DateTimePicker;
 use crate::components::ui::empty::{Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyMediaVariant, EmptyTitle};
@@ -266,10 +266,10 @@ fn ReminderRow(reminder: Reminder, reload: Callback<()>, edit: Callback<Reminder
                 {(!summary.is_empty()).then(|| view! { <span class="text-xs text-muted-foreground line-clamp-1">{summary}</span> })}
             </div>
             {reminder.note_id.map(|n| view! {
-                <Button variant=ButtonVariant::Ghost size=ButtonSize::Sm href=api::url(&format!("/notes/{n}"))>
+                <ButtonLink variant=ButtonVariant::Ghost size=ButtonSize::Sm href=api::url(&format!("/notes/{n}"))>
                     <FileText />
                     "Open note"
-                </Button>
+                </ButtonLink>
             })}
             {badge}
             <div class="flex gap-0.5 items-center ml-auto opacity-70 transition-opacity group-hover:opacity-100 pointer-coarse:opacity-100">

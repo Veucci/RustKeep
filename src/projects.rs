@@ -14,11 +14,10 @@ use crate::util::{Res, all, archive_set, bad, exec, one, uuid};
 
 pub const PROJECT_SELECT: &str = "SELECT p.id, p.name, p.description, p.status, p.created, p.archived, p.share_token, p.share_expires, \
      (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id) AS tasks, \
-     (SELECT COUNT(*) FROM tasks t WHERE t.column_id = \
-        (SELECT c.id FROM board_columns c WHERE c.project_id = p.id ORDER BY c.position DESC LIMIT 1)) AS done \
+     (SELECT COUNT(*) FROM tasks t JOIN board_columns c ON c.id = t.column_id WHERE t.project_id = p.id AND c.done = 1) AS done \
      FROM projects p";
 
-const DEFAULT_COLUMNS: [&str; 3] = ["To do", "In progress", "Done"];
+const DEFAULT_COLUMNS: [(&str, bool); 3] = [("To do", false), ("In progress", false), ("Done", true)];
 
 #[derive(Serialize, Deserialize)]
 pub struct Project {
@@ -68,11 +67,11 @@ pub async fn create(app: St, user: User, Json(r): Json<ProjectReq>) -> Res<Json<
             params![id.as_str(), user.id.as_str(), r.name.trim(), r.description],
         )
         .await?;
-    for (pos, name) in DEFAULT_COLUMNS.iter().enumerate() {
+    for (pos, (name, done)) in DEFAULT_COLUMNS.iter().enumerate() {
         app.db
             .execute(
-                "INSERT INTO board_columns (id, project_id, name, position) VALUES (?1, ?2, ?3, ?4)",
-                params![uuid(), id.as_str(), *name, pos as i64],
+                "INSERT INTO board_columns (id, project_id, name, position, done) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![uuid(), id.as_str(), *name, pos as i64, *done as i64],
             )
             .await?;
     }

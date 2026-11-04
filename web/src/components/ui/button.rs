@@ -30,9 +30,23 @@ variants! {
             }
         },
         component: {
-            element: button,
-            support_href: true,
-            support_aria_current: true
+            element: button
         }
+    }
+}
+
+#[component]
+pub fn ButtonLink(
+    #[prop(into, optional)] variant: Signal<ButtonVariant>,
+    #[prop(into, optional)] size: Signal<ButtonSize>,
+    #[prop(into, optional)] class: Signal<String>,
+    #[prop(into)] href: String,
+    children: Children,
+) -> impl IntoView {
+    let computed_class = move || ButtonClass { variant: variant.get(), size: size.get() }.with_class(class.get());
+    view! {
+        <a class=computed_class href=href data-name="Button">
+            {children()}
+        </a>
     }
 }

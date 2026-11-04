@@ -23,10 +23,11 @@ pub struct Column {
     project_id: String,
     name: String,
     position: i64,
+    done: i64,
 }
 
 const COLUMN_SELECT: &str =
-    "SELECT c.id, c.project_id, c.name, c.position FROM board_columns c JOIN projects p ON p.id = c.project_id WHERE p.user_id = ?1";
+    "SELECT c.id, c.project_id, c.name, c.position, c.done FROM board_columns c JOIN projects p ON p.id = c.project_id WHERE p.user_id = ?1";
 
 pub async fn columns(app: St, user: User, Path(id): Path<String>) -> Res<Json<Vec<Column>>> {
     let sql = format!("{COLUMN_SELECT} AND p.id = ?2 ORDER BY c.position");
@@ -74,27 +75,46 @@ pub async fn remove_column(app: St, user: User, Path(id): Path<String>) -> Res<J
 }
 
 #[derive(Deserialize)]
-struct Placed {
-    id: String,
-    project_id: String,
-    position: i64,
+pub struct ColumnDoneReq {
+    done: bool,
 }
 
-pub async fn move_column(app: St, user: User, Path((id, dir)): Path<(String, String)>) -> Res<Json<Value>> {
-    let neighbor_sql = match dir.as_str() {
-        "left" => "position < ?2 ORDER BY position DESC",
-        "right" => "position > ?2 ORDER BY position ASC",
-        _ => return Err(bad("Invalid direction")),
-    };
-    let sql = format!("SELECT id, project_id, position FROM board_columns WHERE id = ?1 AND {OWNED}");
-    let col: Placed = one(&app.db, &sql, params![id.as_str(), user.id.as_str()]).await?;
-    let sql = format!("SELECT id, project_id, position FROM board_columns WHERE project_id = ?1 AND {neighbor_sql} LIMIT 1");
-    let Ok(other) = one::<Placed>(&app.db, &sql, params![col.project_id, col.position]).await else {
-        return Ok(Json(json!({ "ok": true })));
-    };
-    let swap = "UPDATE board_columns SET position = ?1 WHERE id = ?2";
-    app.db.execute(swap, params![other.position, col.id]).await?;
-    app.db.execute(swap, params![col.position, other.id]).await?;
+pub async fn set_column_done(app: St, user: User, Path(id): Path<String>, Json(r): Json<ColumnDoneReq>) -> Res<Json<Value>> {
+    let sql = format!("UPDATE board_columns SET done = ?3 WHERE id = ?1 AND {OWNED}");
+    exec(&app.db, &sql, params![id.as_str(), user.id.as_str(), r.done as i64]).await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+struct Located {
+    project_id: String,
+}
+
+#[derive(Deserialize)]
+pub struct ColumnMoveReq {
+    index: usize,
+}
+
+async fn renumber(db: &libsql::Connection, sql: &str, order: &[String]) -> Res<()> {
+    let tx = db.transaction().await?;
+    for (pos, id) in order.iter().enumerate() {
+        tx.execute(sql, params![pos as i64, id.as_str()]).await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+async fn ids(db: &libsql::Connection, sql: &str, parent: &str, moved: &str) -> Res<Vec<String>> {
+    Ok(all::<Row>(db, sql, params![parent, moved]).await?.into_iter().map(|r| r.id).collect())
+}
+
+pub async fn move_column(app: St, user: User, Path(id): Path<String>, Json(r): Json<ColumnMoveReq>) -> Res<Json<Value>> {
+    let sql = format!("SELECT project_id FROM board_columns WHERE id = ?1 AND {OWNED}");
+    let column: Located = one(&app.db, &sql, params![id.as_str(), user.id.as_str()]).await?;
+    let others = "SELECT id FROM board_columns WHERE project_id = ?1 AND id != ?2 ORDER BY position, rowid";
+    let mut order = ids(&app.db, others, &column.project_id, &id).await?;
+    order.insert(r.index.min(order.len()), id);
+    renumber(&app.db, "UPDATE board_columns SET position = ?1 WHERE id = ?2", &order).await?;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -177,7 +197,7 @@ pub struct MoveReq {
 }
 
 #[derive(Deserialize)]
-struct TaskId {
+struct Row {
     id: String,
 }
 
@@ -187,22 +207,11 @@ pub async fn move_task(app: St, user: User, Path(id): Path<String>, Json(r): Jso
          AND ?3 IN (SELECT c.id FROM board_columns c WHERE c.project_id = tasks.project_id)"
     );
     exec(&app.db, &sql, params![id.as_str(), user.id.as_str(), r.column_id.as_str()]).await?;
-    let mut order: Vec<String> = all::<TaskId>(
-        &app.db,
-        "SELECT id FROM tasks WHERE column_id = ?1 AND id != ?2 ORDER BY position, created",
-        params![r.column_id.as_str(), id.as_str()],
-    )
-    .await?
-    .into_iter()
-    .map(|t| t.id)
-    .collect();
+    let others = "SELECT id FROM tasks WHERE column_id = ?1 AND id != ?2 ORDER BY position, created";
+    let mut order = ids(&app.db, others, &r.column_id, &id).await?;
     let at = r.before.and_then(|b| order.iter().position(|t| *t == b)).unwrap_or(order.len());
     order.insert(at, id);
-    let tx = app.db.transaction().await?;
-    for (pos, task) in order.iter().enumerate() {
-        tx.execute("UPDATE tasks SET position = ?1 WHERE id = ?2", params![pos as i64, task.as_str()]).await?;
-    }
-    tx.commit().await?;
+    renumber(&app.db, "UPDATE tasks SET position = ?1 WHERE id = ?2", &order).await?;
     Ok(Json(json!({ "ok": true })))
 }
 

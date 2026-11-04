@@ -43,8 +43,8 @@ pub struct Dashboard {
 }
 
 const OPEN_TASK: &str = "FROM tasks t JOIN projects p ON p.id = t.project_id \
-    WHERE p.user_id = ?1 AND p.archived = 0 AND t.due IS NOT NULL AND t.column_id != \
-    (SELECT c.id FROM board_columns c WHERE c.project_id = p.id ORDER BY c.position DESC LIMIT 1)";
+    WHERE p.user_id = ?1 AND p.archived = 0 AND t.due IS NOT NULL AND t.column_id NOT IN \
+    (SELECT c.id FROM board_columns c WHERE c.project_id = p.id AND c.done = 1)";
 
 const STATS: &str = "SELECT \
     (SELECT COUNT(*) FROM notes WHERE user_id = ?1 AND secret = 0 AND archived = 0 AND trashed_at IS NULL) AS notes, \

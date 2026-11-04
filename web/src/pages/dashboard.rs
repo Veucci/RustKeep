@@ -7,7 +7,7 @@ use serde_json::json;
 
 use crate::api;
 use crate::id::Id;
-use crate::components::ui::button::{Button, ButtonSize, ButtonVariant};
+use crate::components::ui::button::{Button, ButtonLink, ButtonSize, ButtonVariant};
 use crate::components::ui::card::{Card, CardContent, CardDescription, CardHeader, CardTitle};
 use crate::components::ui::progress::Progress;
 use crate::components::ui::skeleton::Skeleton;
@@ -85,10 +85,10 @@ fn Panel(#[prop(into)] title: String, #[prop(into)] description: String, href: &
                     </CardTitle>
                     <CardDescription>{description}</CardDescription>
                 </div>
-                <Button variant=ButtonVariant::Ghost size=ButtonSize::Sm href=api::url(href)>
+                <ButtonLink variant=ButtonVariant::Ghost size=ButtonSize::Sm href=api::url(href)>
                     "View all"
                     <ArrowRight />
-                </Button>
+                </ButtonLink>
             </CardHeader>
             <CardContent class="flex flex-col">{children()}</CardContent>
         </Card>
@@ -250,18 +250,18 @@ pub fn Dashboard() -> impl IntoView {
     view! {
         <div class="flex flex-col gap-6 mx-auto max-w-7xl page-enter">
             <PageHeader title=greeting description="Here is what is happening in your workspace.">
-                <Button variant=ButtonVariant::Outline href=api::url("/reminders?new=1")>
+                <ButtonLink variant=ButtonVariant::Outline href=api::url("/reminders?new=1")>
                     <Bell />
                     "Reminder"
-                </Button>
-                <Button variant=ButtonVariant::Outline href=api::url("/files")>
+                </ButtonLink>
+                <ButtonLink variant=ButtonVariant::Outline href=api::url("/files")>
                     <Upload />
                     "Upload"
-                </Button>
-                <Button variant=ButtonVariant::Outline href=api::url("/projects?new=1")>
+                </ButtonLink>
+                <ButtonLink variant=ButtonVariant::Outline href=api::url("/projects?new=1")>
                     <FolderKanban />
                     "Project"
-                </Button>
+                </ButtonLink>
                 <Button on:click=new_note>
                     <Plus />
                     "New note"

@@ -1,8 +1,9 @@
 use std::cmp::Reverse;
 use std::collections::HashSet;
+use std::time::Duration;
 
 use icons::{
-    Archive, ArchiveRestore, ArrowLeft, Calendar, ChevronLeft, ChevronRight, Download, Flag, FolderKanban, ListChecks,
+    Archive, ArchiveRestore, ArrowLeft, Calendar, ChevronRight, CircleCheck, Download, Flag, FolderKanban, GripVertical, ListChecks,
     Pencil, Plus, Share2, SquareKanban, Trash2,
 };
 use leptos::ev::SubmitEvent;
@@ -13,12 +14,13 @@ use leptos_router::components::A;
 use leptos_router::hooks::{use_location, use_navigate, use_params_map};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use web_sys::DragEvent;
+use wasm_bindgen::JsCast;
+use web_sys::{DragEvent, Element, KeyboardEvent, MouseEvent, PointerEvent};
 
 use crate::api::{self, AutoSave, SaveState};
 use crate::id::Id;
 use crate::components::ui::badge::{Badge, BadgeVariant};
-use crate::components::ui::button::{Button, ButtonSize, ButtonVariant};
+use crate::components::ui::button::{Button, ButtonLink, ButtonSize, ButtonVariant};
 use crate::components::ui::checkbox::Checkbox;
 use crate::components::ui::card::{Card, CardContent, CardDescription, CardHeader, CardTitle};
 use crate::components::ui::date_picker::DatePicker;
@@ -69,15 +71,16 @@ pub struct ProjectItem {
     pub share_token: Option<String>,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Hash, Deserialize)]
 struct Column {
     id: Id,
     #[serde(default)]
     project_id: Id,
     name: String,
+    done: i64,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct Task {
     id: Id,
     column_id: Id,
@@ -144,10 +147,10 @@ pub fn Projects() -> impl IntoView {
     view! {
         <div class="flex flex-col gap-6 mx-auto max-w-6xl page-enter">
             <PageHeader title="Projects" description="Boards, notes and files grouped by project.">
-                <Button size=ButtonSize::Lg class="text-base" href=api::url("/projects/overview")>
+                <ButtonLink size=ButtonSize::Lg class="text-base" href=api::url("/projects/overview")>
                     <SquareKanban class="size-5" />
                     "Overview"
-                </Button>
+                </ButtonLink>
             </PageHeader>
             <NewProject />
             <ProjectList />
@@ -343,10 +346,10 @@ fn ProjectView(project: ProjectItem) -> impl IntoView {
     view! {
         <div class="flex flex-col gap-6 mx-auto max-w-screen-2xl page-enter">
             <div class="flex flex-wrap gap-2 items-center">
-                <Button variant=ButtonVariant::Ghost size=ButtonSize::Sm href=api::url("/projects")>
+                <ButtonLink variant=ButtonVariant::Ghost size=ButtonSize::Sm href=api::url("/projects")>
                     <ArrowLeft />
                     "All projects"
-                </Button>
+                </ButtonLink>
                 <Show when=move || archived.get()>
                     <Badge variant=BadgeVariant::Secondary>"Archived"</Badge>
                 </Show>
@@ -377,10 +380,10 @@ fn ProjectView(project: ProjectItem) -> impl IntoView {
                     <Share2 />
                     <span class="hidden sm:inline">"Share"</span>
                 </Button>
-                <Button variant=ButtonVariant::Outline attr:title="Export Excel" attr:download="" href=api::url(&format!("/api/projects/{id}/export"))>
+                <ButtonLink variant=ButtonVariant::Outline attr:title="Export Excel" attr:download="" href=api::url(&format!("/api/projects/{id}/export"))>
                     <Download />
                     <span class="hidden sm:inline">"Export Excel"</span>
-                </Button>
+                </ButtonLink>
                 <Button variant=ButtonVariant::Outline attr:title=move || if archived.get() { "Unarchive" } else { "Archive" } on:click=toggle_archive>
                     {move || if archived.get() { view! { <ArchiveRestore /> }.into_any() } else { view! { <Archive /> }.into_any() }}
                     <span class="hidden sm:inline">{move || if archived.get() { "Unarchive" } else { "Archive" }}</span>
@@ -409,8 +412,32 @@ struct BoardCtx {
     dragging: RwSignal<Option<Id>>,
     over_task: RwSignal<Option<Id>>,
     over_column: RwSignal<Option<Id>>,
+    dragging_column: RwSignal<Option<Id>>,
+    pointer: RwSignal<Option<(f64, f64)>>,
+    drag_label: RwSignal<String>,
+    scroll_timer: StoredValue<Option<IntervalHandle>>,
+    board: NodeRef<html::Div>,
     form: TaskForm,
     ui: Ui,
+}
+
+const EDGE_SCROLL_ZONE: f64 = 48.0;
+const EDGE_SCROLL_STEP: f64 = 6.0;
+const LANE_GAP: f64 = 16.0;
+
+fn task_under(x: f64, y: f64) -> Option<Id> {
+    let found = document().element_from_point(x as f32, y as f32)?.closest("[data-task]").ok()??;
+    found.get_attribute("data-task")?.parse().ok()
+}
+
+fn lane_under(x: f64) -> Option<Id> {
+    let lanes = document().query_selector_all("[data-lane]").ok()?;
+    let spans_pointer = |lane: &Element| {
+        let bounds = lane.get_bounding_client_rect();
+        (bounds.left() - LANE_GAP / 2.0..=bounds.right() + LANE_GAP / 2.0).contains(&x)
+    };
+    let found = (0..lanes.length()).filter_map(|i| lanes.item(i)?.dyn_into::<Element>().ok()).find(spans_pointer)?;
+    found.get_attribute("data-lane")?.parse().ok()
 }
 
 fn reorder(list: &mut Vec<Task>, id: Id, column: Id, before: Option<Id>) {
@@ -434,8 +461,72 @@ impl BoardCtx {
 
     fn end_drag(self) {
         self.dragging.set(None);
+        self.dragging_column.set(None);
         self.over_task.set(None);
         self.over_column.set(None);
+        self.pointer.set(None);
+        if let Some(timer) = self.scroll_timer.get_value() {
+            timer.clear();
+        }
+    }
+
+    fn begin_pointer_drag(self, ev: &PointerEvent, label: String) {
+        if let Some(grip) = ev.current_target().and_then(|t| t.dyn_into::<Element>().ok()) {
+            let _ = grip.set_pointer_capture(ev.pointer_id());
+        }
+        self.drag_label.set(label);
+        self.pointer.set(Some((0.0, 0.0)));
+        self.track_pointer(ev);
+        let timer = set_interval_with_handle(move || self.edge_scroll(), Duration::from_millis(16));
+        self.scroll_timer.set_value(timer.ok());
+    }
+
+    fn track_pointer(self, ev: &PointerEvent) {
+        if self.pointer.get_untracked().is_some() {
+            let at = (f64::from(ev.client_x()), f64::from(ev.client_y()));
+            self.pointer.set(Some(at));
+            self.hit_test(at);
+        }
+    }
+
+    fn hit_test(self, (x, y): (f64, f64)) {
+        self.over_column.set(lane_under(x));
+        self.over_task.set(task_under(x, y));
+    }
+
+    fn edge_scroll(self) {
+        let (Some(board), Some(at)) = (self.board.get_untracked(), self.pointer.get_untracked()) else { return };
+        let bounds = board.get_bounding_client_rect();
+        if at.0 < bounds.left() + EDGE_SCROLL_ZONE {
+            board.scroll_by_with_x_and_y(-EDGE_SCROLL_STEP, 0.0);
+        } else if at.0 > bounds.right() - EDGE_SCROLL_ZONE {
+            board.scroll_by_with_x_and_y(EDGE_SCROLL_STEP, 0.0);
+        }
+        self.hit_test(at);
+    }
+
+    fn drop_task_at_pointer(self) {
+        let before = self.over_task.get_untracked();
+        let target = self.over_column.get_untracked();
+        match self.lanes().into_iter().find(|l| Some(l.id) == target) {
+            Some(lane) => self.drop_at(&lane, before),
+            None => self.end_drag(),
+        }
+    }
+
+    fn drop_column_at_pointer(self) {
+        let dragged = self.dragging_column.get_untracked();
+        let target = self.over_column.get_untracked();
+        self.end_drag();
+        let Some(id) = dragged.filter(|id| target != Some(*id)) else { return };
+        if let Some(index) = self.lanes().iter().position(|l| Some(l.id) == target) {
+            self.move_column(id, index);
+        }
+    }
+
+    fn move_column(self, id: Id, index: usize) {
+        let body = json!({ "index": index });
+        self.call(async move { api::post::<Value>(&format!("/api/columns/{id}/move"), &body).await }, true);
     }
 
     fn drop_at(self, lane: &Column, before: Option<Id>) {
@@ -470,8 +561,8 @@ impl BoardCtx {
         self.columns.get().unwrap_or_default().into_iter().filter(|c| c.project_id == project).collect()
     }
 
-    fn is_done(self, project: Id, column: Id) -> bool {
-        self.project_columns(project).last().map(|c| c.id) == Some(column)
+    fn is_done(self, column: Id) -> bool {
+        self.columns.get().unwrap_or_default().iter().any(|c| c.id == column && c.done == 1)
     }
 }
 
@@ -588,6 +679,11 @@ fn Board(#[prop(optional)] project: Option<Id>) -> impl IntoView {
         dragging: RwSignal::new(None),
         over_task: RwSignal::new(None),
         over_column: RwSignal::new(None),
+        dragging_column: RwSignal::new(None),
+        pointer: RwSignal::new(None),
+        drag_label: RwSignal::new(String::new()),
+        scroll_timer: StoredValue::new(None),
+        board: NodeRef::new(),
         form: TaskForm::new(),
         ui,
     };
@@ -625,10 +721,18 @@ fn Board(#[prop(optional)] project: Option<Id>) -> impl IntoView {
             </div>
             <SortSelect options=ORDER value=order on_change=set_order />
         </Toolbar>
-        <div class="flex overflow-x-auto gap-4 items-start px-1 pb-4 -mx-1 page-enter snap-x snap-mandatory sm:snap-none">
-            {move || ctx.lanes().into_iter().map(|c| view! { <BoardColumn column=c ctx filters /> }).collect_view()}
+        <div
+            node_ref=ctx.board
+            class="flex overflow-x-auto gap-4 items-start px-1 pb-4 -mx-1 page-enter sm:snap-none"
+            class=("snap-x", move || ctx.pointer.get().is_none())
+            class=("snap-mandatory", move || ctx.pointer.get().is_none())
+        >
+            <For each=move || ctx.lanes() key=Column::clone let(column)>
+                <BoardColumn column ctx filters />
+            </For>
             {project.map(|project| view! { <AddColumn project ctx /> })}
         </div>
+        <DragGhost ctx />
         <TaskModal ctx />
     }
 }
@@ -743,8 +847,56 @@ fn ProjectOption(id: String, name: String, selected: RwSignal<HashSet<String>>) 
 }
 
 #[component]
+fn DragGhost(ctx: BoardCtx) -> impl IntoView {
+    let at = move || ctx.pointer.get().unwrap_or_default();
+    view! {
+        <Show when=move || ctx.pointer.get().is_some()>
+            <div
+                class="fixed z-50 p-3 w-56 text-sm font-medium rounded-lg border shadow-lg -translate-x-1/2 -translate-y-full pointer-events-none truncate bg-card"
+                style:left=move || format!("{}px", at().0)
+                style:top=move || format!("{}px", at().1)
+            >
+                {move || ctx.drag_label.get()}
+            </div>
+        </Show>
+    }
+}
+
+#[component]
+fn DragGrip(
+    ctx: BoardCtx,
+    label: String,
+    title: &'static str,
+    #[prop(into)] on_start: Callback<()>,
+    #[prop(into)] on_finish: Callback<()>,
+    #[prop(optional, into)] class: String,
+) -> impl IntoView {
+    view! {
+        <Button
+            variant=ButtonVariant::Ghost
+            size=ButtonSize::IconXs
+            class=format!("cursor-grab touch-none active:cursor-grabbing {class}")
+            attr:title=title
+            on:pointerdown=move |ev: PointerEvent| {
+                if ev.button() == 0 {
+                    on_start.run(());
+                    ctx.begin_pointer_drag(&ev, label.clone());
+                }
+            }
+            on:pointermove=move |ev: PointerEvent| ctx.track_pointer(&ev)
+            on:pointerup=move |_| on_finish.run(())
+            on:pointercancel=move |_| ctx.end_drag()
+            on:click=move |ev: MouseEvent| ev.stop_propagation()
+        >
+            <GripVertical />
+        </Button>
+    }
+}
+
+#[component]
 fn ColumnHeader(column: Column, count: Signal<usize>, ctx: BoardCtx) -> impl IntoView {
     let id = column.id;
+    let done = column.done == 1;
     let editing = RwSignal::new(false);
     let name = RwSignal::new(column.name.clone());
     let rename = move |ev: SubmitEvent| {
@@ -753,7 +905,22 @@ fn ColumnHeader(column: Column, count: Signal<usize>, ctx: BoardCtx) -> impl Int
         let body = json!({ "name": name.get_untracked() });
         ctx.call(async move { api::put::<Value>(&format!("/api/columns/{id}"), &body).await }, true);
     };
-    let shift = move |dir: &'static str| ctx.call(async move { api::post::<Value>(&format!("/api/columns/{id}/move/{dir}"), &()).await }, true);
+    let step = move |ev: KeyboardEvent| {
+        let delta = match ev.key().as_str() {
+            "ArrowLeft" => -1,
+            "ArrowRight" => 1,
+            _ => return,
+        };
+        ev.prevent_default();
+        let at = ctx.lanes().iter().position(|c| c.id == id);
+        if let Some(index) = at.and_then(|a| a.checked_add_signed(delta)) {
+            ctx.move_column(id, index);
+        }
+    };
+    let toggle_done = move |_| {
+        let body = json!({ "done": !done });
+        ctx.call(async move { api::put::<Value>(&format!("/api/columns/{id}/done"), &body).await }, true);
+    };
     let remove = move |_| {
         ctx.ui.confirm_delete("This column and all of its tasks will be deleted.", move || {
             ctx.call(async move { api::del(&format!("/api/columns/{id}")).await }, true);
@@ -766,6 +933,7 @@ fn ColumnHeader(column: Column, count: Signal<usize>, ctx: BoardCtx) -> impl Int
                 when=move || editing.get()
                 fallback=move || {
                     view! {
+                        {done.then(|| view! { <CircleCheck class="size-3.5 shrink-0 text-primary" /> })}
                         <span class="flex-1 text-sm font-semibold truncate" on:dblclick=move |_| editing.set(ctx.project.is_some())>{name.get()}</span>
                         <Badge variant=BadgeVariant::Secondary class="tabular-nums">{move || count.get()}</Badge>
                     }
@@ -776,11 +944,22 @@ fn ColumnHeader(column: Column, count: Signal<usize>, ctx: BoardCtx) -> impl Int
                 </form>
             </Show>
             <div class="flex opacity-0 transition-opacity group-hover/col:opacity-100 pointer-coarse:opacity-100" class=("hidden", ctx.project.is_none())>
-                <Button variant=ButtonVariant::Ghost size=ButtonSize::IconXs attr:title="Move left" on:click=move |_| shift("left")>
-                    <ChevronLeft />
-                </Button>
-                <Button variant=ButtonVariant::Ghost size=ButtonSize::IconXs attr:title="Move right" on:click=move |_| shift("right")>
-                    <ChevronRight />
+                <DragGrip
+                    ctx
+                    label=column.name.clone()
+                    title="Drag to reorder, or use the arrow keys"
+                    on_start=move |_| ctx.dragging_column.set(Some(id))
+                    on_finish=move |_| ctx.drop_column_at_pointer()
+                    on:keydown=step
+                />
+                <Button
+                    variant=ButtonVariant::Ghost
+                    size=ButtonSize::IconXs
+                    attr:title=if done { "Stop counting tasks here as done" } else { "Count tasks here as done" }
+                    attr:aria-pressed=done.to_string()
+                    on:click=toggle_done
+                >
+                    <CircleCheck />
                 </Button>
                 <Button variant=ButtonVariant::Ghost size=ButtonSize::IconXs attr:title="Rename" on:click=move |_| editing.update(|e| *e = !*e)>
                     <Pencil />
@@ -806,6 +985,7 @@ fn BoardColumn(column: Column, ctx: BoardCtx, filters: Filters) -> impl IntoView
     };
     let count = Signal::derive(move || mine().len());
     let limit = RwSignal::new(PAGE);
+    let visible = move || mine().into_iter().take(limit.get()).collect::<Vec<_>>();
     let hidden = move || count.get().saturating_sub(limit.get());
     let show_more = move || limit.update(|l| *l += PAGE);
     let list = NodeRef::<html::Div>::new();
@@ -825,7 +1005,9 @@ fn BoardColumn(column: Column, ctx: BoardCtx, filters: Filters) -> impl IntoView
 
     view! {
         <div
+            data-lane=id.to_string()
             class="flex flex-col gap-2 p-2 w-72 rounded-xl border transition-all duration-200 shrink-0 snap-start scroll-ml-1 bg-muted/40 max-h-[calc(100dvh-10rem)]"
+            class=("opacity-40", move || ctx.dragging_column.get() == Some(id))
             class=("ring-2", over)
             class=("ring-primary/30", over)
             class=("bg-muted", over)
@@ -852,7 +1034,9 @@ fn BoardColumn(column: Column, ctx: BoardCtx, filters: Filters) -> impl IntoView
                     }
                 }
             >
-                {move || mine().into_iter().take(limit.get()).map(|t| view! { <TaskCard task=t lane ctx /> }).collect_view()}
+                <For each=visible key=Task::clone let(task)>
+                    <TaskCard task lane ctx />
+                </For>
                 <Show when=move || hidden() != 0>
                     <Button variant=ButtonVariant::Ghost size=ButtonSize::Sm class="shrink-0 text-muted-foreground" on:click=move |_| show_more()>
                         {move || format!("Show {} more", hidden().min(PAGE))}
@@ -910,13 +1094,15 @@ fn TaskCard(task: Task, lane: StoredValue<Column>, ctx: BoardCtx) -> impl IntoVi
     let subtasks = (task.subtasks > 0).then(|| format!("{}/{}", task.subtasks_done, task.subtasks));
     let created = fmt_date(task.created);
     let priority = task.priority;
-    let (project, column) = (task.project_id, task.column_id);
-    let done = Signal::derive(move || ctx.is_done(project, column));
+    let column = task.column_id;
+    let done = Signal::derive(move || ctx.is_done(column));
     let project_name = ctx.project.is_none().then_some(task.project);
     let before = move || ctx.over_task.get() == Some(id) && ctx.dragging.get().is_some_and(|d| d != id);
+    let label = task.title.clone();
 
     view! {
         <div
+            data-task=id.to_string()
             class="flex flex-col gap-1"
             on:dragover=move |ev: DragEvent| {
                 ev.prevent_default();
@@ -931,9 +1117,13 @@ fn TaskCard(task: Task, lane: StoredValue<Column>, ctx: BoardCtx) -> impl IntoVi
             <div class="h-1 rounded-full transition-all shrink-0 bg-primary" class=("hidden", move || !before()) />
             <div
                 draggable="true"
-                class="flex flex-col gap-2 p-3 text-sm rounded-lg border shadow-xs shrink-0 cursor-grab active:cursor-grabbing bg-card lift animate-in fade-in-0 zoom-in-95"
+                class="flex relative flex-col gap-2 p-3 text-sm rounded-lg border shadow-xs shrink-0 cursor-grab active:cursor-grabbing bg-card lift animate-in fade-in-0 zoom-in-95"
                 class=("opacity-40", move || ctx.dragging.get() == Some(id))
                 on:dragstart=move |ev: DragEvent| {
+                    if ctx.pointer.get_untracked().is_some() {
+                        ev.prevent_default();
+                        return;
+                    }
                     if let Some(dt) = ev.data_transfer() {
                         let _ = dt.set_data("text/plain", &id.to_string());
                     }
@@ -943,7 +1133,15 @@ fn TaskCard(task: Task, lane: StoredValue<Column>, ctx: BoardCtx) -> impl IntoVi
                 on:click=move |_| ctx.form.edit(edit_task.clone())
             >
                 {cover.map(|src| view! { <img src=src alt="" loading="lazy" draggable="false" class="object-cover w-full h-32 rounded-md bg-muted" /> })}
-                <span class="font-medium leading-snug" class=("line-through", done) class=("text-muted-foreground", done)>
+                <DragGrip
+                    ctx
+                    label
+                    title="Drag to another column"
+                    class="hidden absolute top-1 right-1 pointer-coarse:inline-flex size-8 bg-card/80"
+                    on_start=move |_| ctx.dragging.set(Some(id))
+                    on_finish=move |_| ctx.drop_task_at_pointer()
+                />
+                <span class="font-medium leading-snug pointer-coarse:pr-7" class=("line-through", done) class=("text-muted-foreground", done)>
                     {task.title}
                 </span>
                 <Show when=move || has_description>

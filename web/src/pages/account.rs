@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use crate::api;
 use crate::components::ui::badge::{Badge, BadgeVariant};
-use crate::components::ui::button::{Button, ButtonSize, ButtonVariant};
+use crate::components::ui::button::{Button, ButtonLink, ButtonSize, ButtonVariant};
 use crate::components::ui::card::{Card, CardContent, CardDescription, CardHeader, CardTitle};
 use crate::components::ui::input::{Input, InputType};
 use crate::components::ui::label::Label;
@@ -301,10 +301,10 @@ fn UsageCard(stats: AccountStats) -> impl IntoView {
 #[component]
 fn AuthorLink(href: &'static str, label: &'static str, children: Children) -> impl IntoView {
     view! {
-        <Button variant=ButtonVariant::Outline href=href attr:target="_blank" attr:rel="noopener">
+        <ButtonLink variant=ButtonVariant::Outline href=href attr:target="_blank" attr:rel="noopener">
             {children()}
             {label}
-        </Button>
+        </ButtonLink>
     }
 }
 

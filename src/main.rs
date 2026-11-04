@@ -77,7 +77,8 @@ CREATE TABLE IF NOT EXISTS projects (
   status TEXT NOT NULL DEFAULT 'active', created INTEGER NOT NULL DEFAULT (unixepoch()),
   archived INTEGER NOT NULL DEFAULT 0, share_token TEXT UNIQUE, share_expires INTEGER);
 CREATE TABLE IF NOT EXISTS board_columns (
-  id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), name TEXT NOT NULL, position INTEGER NOT NULL);
+  id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), name TEXT NOT NULL, position INTEGER NOT NULL,
+  done INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
   column_id TEXT NOT NULL REFERENCES board_columns(id), title TEXT NOT NULL,
@@ -230,7 +231,8 @@ fn api() -> Router<Arc<App>> {
         .route("/api/board/columns", get(board::overview_columns))
         .route("/api/board/tasks", get(board::overview_tasks))
         .route("/api/columns/{id}", put(board::rename_column).delete(board::remove_column))
-        .route("/api/columns/{id}/move/{dir}", post(board::move_column))
+        .route("/api/columns/{id}/move", post(board::move_column))
+        .route("/api/columns/{id}/done", put(board::set_column_done))
         .route("/api/tasks/{id}", put(board::update_task).delete(board::remove_task))
         .route("/api/tasks/{id}/move", post(board::move_task))
         .route("/api/tasks/{id}/action/{action}", post(board::task_action))

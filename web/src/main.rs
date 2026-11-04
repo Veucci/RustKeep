@@ -23,7 +23,7 @@ use serde_json::Value;
 use wasm_bindgen::JsCast;
 
 use crate::components::hooks::use_theme_mode::ThemeMode;
-use crate::components::ui::button::{Button, ButtonSize, ButtonVariant};
+use crate::components::ui::button::{Button, ButtonLink, ButtonSize, ButtonVariant};
 use crate::components::ui::separator::{Separator, SeparatorOrientation};
 use crate::components::ui::sidenav::{
     Sidenav, SidenavContent, SidenavFooter, SidenavGroup, SidenavGroupContent, SidenavGroupLabel, SidenavHeader,
@@ -94,7 +94,7 @@ fn NotFound() -> impl IntoView {
     view! {
         <div class="flex flex-col gap-3 items-center p-16 text-center">
             <p class="text-lg font-semibold">"Page not found"</p>
-            <Button href=api::url("/")>"Go to dashboard"</Button>
+            <ButtonLink href=api::url("/")>"Go to dashboard"</ButtonLink>
         </div>
     }
 }

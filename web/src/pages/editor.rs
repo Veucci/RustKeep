@@ -15,7 +15,7 @@ use web_sys::{File, HtmlDocument, HtmlElement, HtmlInputElement, HtmlTemplateEle
 
 use crate::id::Id;
 use crate::api::{self, AutoSave, SaveState, client_id, next_rev};
-use crate::components::ui::button::{Button, ButtonSize, ButtonVariant};
+use crate::components::ui::button::{Button, ButtonLink, ButtonSize, ButtonVariant};
 use crate::components::ui::input::Input;
 use crate::md;
 use crate::pages::projects::ProjectItem;
@@ -176,9 +176,9 @@ fn EditorBody(note: Note) -> impl IntoView {
                         on_change=pick_project
                     />
                     {move || project.get().map(|p| view! {
-                        <Button variant=ButtonVariant::Ghost size=ButtonSize::IconSm attr:title="Open project" href=api::url(&format!("/projects/{p}"))>
+                        <ButtonLink variant=ButtonVariant::Ghost size=ButtonSize::IconSm attr:title="Open project" href=api::url(&format!("/projects/{p}"))>
                             <ExternalLink />
-                        </Button>
+                        </ButtonLink>
                     })}
                     <Button variant=ButtonVariant::Outline size=ButtonSize::Sm attr:title=move || if pinned.get() { "Unpin" } else { "Pin to top" } on:click=toggle_pin>
                         {move || if pinned.get() { view! { <PinOff /> }.into_any() } else { view! { <Pin /> }.into_any() }}
@@ -212,7 +212,7 @@ fn EditorBody(note: Note) -> impl IntoView {
             <p class="text-sm text-muted-foreground">"Download the latest saved version of this note."</p>
             <div class="grid grid-cols-2 gap-2">
                 {["docx", "pdf"].map(|format| view! {
-                    <Button
+                    <ButtonLink
                         variant=ButtonVariant::Outline
                         attr:download=""
                         href=api::url(&format!("/api/notes/{}/export/{format}", id.get_value()))
@@ -220,7 +220,7 @@ fn EditorBody(note: Note) -> impl IntoView {
                     >
                         <FileText />
                         {if format == "pdf" { "PDF" } else { "Word (.docx)" }}
-                    </Button>
+                    </ButtonLink>
                 })}
             </div>
         </Modal>

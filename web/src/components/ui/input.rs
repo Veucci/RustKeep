@@ -1,3 +1,4 @@
+use leptos::either::Either;
 use leptos::html;
 use leptos::prelude::*;
 use strum::AsRefStr;
@@ -58,10 +59,10 @@ pub fn Input(
         class
     );
 
-    let type_str = r#type.as_ref();
+    let type_str = r#type.as_ref().to_owned();
 
     match bind_value {
-        Some(signal) => view! {
+        Some(signal) => Either::Left(view! {
             <input
                 data-name="Input"
                 type=type_str
@@ -82,9 +83,8 @@ pub fn Input(
                 bind:value=signal
                 node_ref=node_ref
             />
-        }
-        .into_any(),
-        None => view! {
+        }),
+        None => Either::Right(view! {
             <input
                 data-name="Input"
                 type=type_str
@@ -104,7 +104,6 @@ pub fn Input(
                 step=step
                 node_ref=node_ref
             />
-        }
-        .into_any(),
+        }),
     }
 }
