@@ -1218,7 +1218,7 @@ fn TaskModal(ctx: BoardCtx) -> impl IntoView {
         <Modal open=form.open title="Edit task" class="max-w-[min(72rem,calc(100%-2rem))]">
             <div class="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_17rem]">
                 <div class="flex flex-col gap-4 min-w-0">
-                    <RichEditor title=form.title body=form.description on_change=Callback::new(|_| ()) upload_project allow_upload=true compact=true height="h-72 min-h-24 resize-y overflow-y-auto" />
+                    <RichEditor title=form.title body=form.description on_change=Callback::new(|_| ()) upload_project allow_upload=true compact=true height="h-72" />
                     <Subtasks ctx />
                 </div>
                 <aside class="flex flex-col gap-4">
@@ -1422,7 +1422,7 @@ fn SubtaskRow(subtask: Subtask, ctx: BoardCtx, list: LocalResource<Vec<Subtask>>
                         upload_project
                         allow_upload=true
                         compact=true
-                        height="min-h-28"
+                        height="h-28"
                         placeholder="Add details..."
                     />
                     <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">

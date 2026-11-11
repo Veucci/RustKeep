@@ -149,7 +149,7 @@ pub fn ReminderForm(
             </div>
             <div class="flex flex-col gap-2">
                 <Label>"Description (optional)"</Label>
-                <RichEditor body=description on_change=Callback::new(|_| ()) compact=true height="min-h-24" placeholder="Add details..." />
+                <RichEditor body=description on_change=Callback::new(|_| ()) compact=true height="h-24" placeholder="Add details..." />
             </div>
             <div class="flex justify-end">
                 <Button attr:disabled=move || busy.get() on:click=move |_| save.run(())>{if id.is_some() { "Save" } else { "Remind me" }}</Button>

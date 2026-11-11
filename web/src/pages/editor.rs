@@ -384,7 +384,7 @@ pub fn RichEditor(
             let _ = input.focus();
         }
     });
-    let toolbar_top = if compact { "top-0" } else { "top-14" };
+    let (toolbar_top, resize) = if compact { ("top-0", "min-h-24 resize-y overflow-y-auto") } else { ("top-14", "") };
 
     Effect::new(move |_| {
         let markdown = body.get();
@@ -558,7 +558,7 @@ pub fn RichEditor(
                     contenteditable="true"
                     role="textbox"
                     aria-multiline="true"
-                    class=format!("p-4 rounded-xl border outline-none md bg-card {height} focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50")
+                    class=format!("p-4 rounded-xl border outline-none md bg-card {height} {resize} focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50")
                     on:input=move |_| sync()
                     on:change=move |_| sync()
                     on:keyup=move |_| refresh()
