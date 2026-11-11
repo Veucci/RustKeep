@@ -939,7 +939,7 @@ fn EventDialog(cal: Cal) -> impl IntoView {
                         upload_project
                         allow_upload=true
                         compact=true
-                        min_height="min-h-72"
+                        height="min-h-72"
                         placeholder="Add details..."
                     />
                 </div>

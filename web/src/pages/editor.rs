@@ -366,7 +366,7 @@ pub fn RichEditor(
     #[prop(optional)] upload_project: Option<RwSignal<Option<Id>>>,
     #[prop(optional)] allow_upload: bool,
     #[prop(optional)] compact: bool,
-    #[prop(default = "min-h-[65vh]")] min_height: &'static str,
+    #[prop(default = "min-h-[65vh]")] height: &'static str,
     #[prop(default = "Start writing...")] placeholder: &'static str,
 ) -> impl IntoView {
     let ui = use_ui();
@@ -558,7 +558,7 @@ pub fn RichEditor(
                     contenteditable="true"
                     role="textbox"
                     aria-multiline="true"
-                    class=format!("p-4 rounded-xl border outline-none md bg-card {min_height} focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50")
+                    class=format!("p-4 rounded-xl border outline-none md bg-card {height} focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50")
                     on:input=move |_| sync()
                     on:change=move |_| sync()
                     on:keyup=move |_| refresh()
