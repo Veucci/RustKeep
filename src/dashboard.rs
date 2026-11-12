@@ -7,7 +7,7 @@ use crate::auth::User;
 use crate::files::{FILE_COLUMNS, FileItem};
 use crate::notes::NoteItem;
 use crate::projects::{PROJECT_SELECT, Project};
-use crate::reminders::Reminder;
+use crate::reminders::{REMINDER_COLUMNS, Reminder};
 use crate::util::{Res, all, one};
 
 #[derive(Serialize, Deserialize)]
@@ -80,8 +80,10 @@ pub async fn get(app: St, user: User) -> Res<Json<Dashboard>> {
         .await?,
         reminders: all(
             db,
-            "SELECT id, title, description, remind_at, note_id, sent, archived FROM reminders \
-             WHERE user_id = ?1 AND sent = 0 AND archived = 0 ORDER BY remind_at LIMIT 5",
+            &format!(
+                "SELECT {REMINDER_COLUMNS} FROM reminders r \
+                 WHERE r.user_id = ?1 AND r.sent = 0 AND r.archived = 0 ORDER BY r.remind_at LIMIT 5"
+            ),
             params![u],
         )
         .await?,

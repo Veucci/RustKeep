@@ -1,6 +1,6 @@
 use std::cmp::Reverse;
 
-use icons::{Archive, ArchiveRestore, Bell, Check, FileText, Pencil, Trash2};
+use icons::{Archive, ArchiveRestore, Bell, Check, FileText, Pencil, SquareKanban, Trash2};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos_router::components::A;
@@ -36,6 +36,10 @@ pub struct Reminder {
     pub description: String,
     pub remind_at: i64,
     pub note_id: Option<String>,
+    #[serde(default)]
+    pub task_id: Option<String>,
+    #[serde(default)]
+    pub project_id: Option<String>,
     pub sent: i64,
     #[serde(default)]
     pub archived: i64,
@@ -80,6 +84,7 @@ pub fn Reminders() -> impl IntoView {
 pub fn ReminderForm(
     #[prop(optional)] reminder: Option<Reminder>,
     #[prop(optional)] note_id: Option<String>,
+    #[prop(optional)] task_id: Option<String>,
     #[prop(into, optional)] title: String,
     on_done: Callback<()>,
 ) -> impl IntoView {
@@ -107,6 +112,7 @@ pub fn ReminderForm(
             "remind_at": remind_at,
             "utc_offset": utc_offset,
             "note_id": note_id,
+            "task_id": task_id,
         });
         busy.set(true);
         spawn_local(async move {
@@ -254,6 +260,8 @@ fn ReminderRow(reminder: Reminder, reload: Callback<()>, edit: Callback<Reminder
     let badge = status(&reminder);
     let summary = md::plain(&reminder.description);
     let stored = StoredValue::new(reminder.clone());
+    let note_link = reminder.note_id.is_some().then(|| reminder_link(&reminder));
+    let task_link = reminder.project_id.is_some().then(|| reminder_link(&reminder));
 
     view! {
         <div class="flex flex-wrap gap-3 items-center py-3 px-4 transition-colors group hover:bg-muted/50">
@@ -265,10 +273,16 @@ fn ReminderRow(reminder: Reminder, reload: Callback<()>, edit: Callback<Reminder
                 <span class="text-xs text-muted-foreground">{fmt_time(reminder.remind_at)}</span>
                 {(!summary.is_empty()).then(|| view! { <span class="text-xs text-muted-foreground line-clamp-1">{summary}</span> })}
             </div>
-            {reminder.note_id.map(|n| view! {
-                <ButtonLink variant=ButtonVariant::Ghost size=ButtonSize::Sm href=api::url(&format!("/notes/{n}"))>
+            {note_link.map(|href| view! {
+                <ButtonLink variant=ButtonVariant::Ghost size=ButtonSize::Sm href>
                     <FileText />
                     "Open note"
+                </ButtonLink>
+            })}
+            {task_link.map(|href| view! {
+                <ButtonLink variant=ButtonVariant::Ghost size=ButtonSize::Sm href>
+                    <SquareKanban />
+                    "Open task"
                 </ButtonLink>
             })}
             {badge}
@@ -297,8 +311,48 @@ fn ReminderRow(reminder: Reminder, reload: Callback<()>, edit: Callback<Reminder
     }
 }
 
+#[component]
+pub fn TaskReminders(#[prop(into)] task_id: Signal<String>, reload: RwSignal<u32>) -> impl IntoView {
+    let ui = use_ui();
+    let linked = LocalResource::new(move || {
+        let task = task_id.get();
+        reload.track();
+        async move {
+            let all = ui.run(api::get::<Vec<Reminder>>("/api/reminders")).await.unwrap_or_default();
+            all.into_iter().filter(|r| r.archived == 0 && r.task_id.as_deref() == Some(task.as_str())).collect::<Vec<_>>()
+        }
+    });
+    move || {
+        linked.get().filter(|list| !list.is_empty()).map(|list| {
+            let rows = list
+                .into_iter()
+                .map(|r| {
+                    let done = r.sent == 1;
+                    view! {
+                        <div class="flex gap-2 items-center py-2 px-3 rounded-md border">
+                            <Bell class="size-4 text-muted-foreground shrink-0" />
+                            <div class="flex flex-col flex-1 min-w-0">
+                                <span class="text-sm font-medium truncate" class=("line-through", done) class=("text-muted-foreground", done)>
+                                    {r.title.clone()}
+                                </span>
+                                <span class="text-xs text-muted-foreground">{fmt_time(r.remind_at)}</span>
+                            </div>
+                            {status(&r)}
+                        </div>
+                    }
+                })
+                .collect_view();
+            view! { <div class="flex flex-col gap-2">{rows}</div> }
+        })
+    }
+}
+
 pub fn reminder_link(r: &Reminder) -> String {
-    r.note_id.as_ref().map_or_else(|| api::url("/reminders"), |n| api::url(&format!("/notes/{n}")))
+    match (&r.project_id, &r.task_id, &r.note_id) {
+        (Some(project), Some(task), _) => api::url(&format!("/projects/{project}?task={task}")),
+        (_, _, Some(note)) => api::url(&format!("/notes/{note}")),
+        _ => api::url("/reminders"),
+    }
 }
 
 #[component]

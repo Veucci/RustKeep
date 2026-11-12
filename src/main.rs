@@ -114,7 +114,7 @@ CREATE TABLE IF NOT EXISTS vault (
 CREATE TABLE IF NOT EXISTS reminders (
   id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), note_id TEXT REFERENCES notes(id), title TEXT NOT NULL,
   remind_at INTEGER NOT NULL, sent INTEGER NOT NULL DEFAULT 0, archived INTEGER NOT NULL DEFAULT 0,
-  description TEXT NOT NULL DEFAULT '', utc_offset INTEGER NOT NULL DEFAULT 0, retry_at INTEGER);
+  description TEXT NOT NULL DEFAULT '', utc_offset INTEGER NOT NULL DEFAULT 0, retry_at INTEGER, task_id TEXT REFERENCES tasks(id));
 CREATE TABLE IF NOT EXISTS registrations (
   token TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), ip TEXT NOT NULL, agent TEXT NOT NULL, language TEXT NOT NULL,
   origin TEXT NOT NULL, created INTEGER NOT NULL DEFAULT (unixepoch()));

@@ -19,14 +19,19 @@ pub struct Reminder {
     description: String,
     remind_at: i64,
     note_id: Option<String>,
+    task_id: Option<String>,
+    project_id: Option<String>,
     sent: i64,
     archived: i64,
 }
 
+pub const REMINDER_COLUMNS: &str = "r.id, r.title, r.description, r.remind_at, r.note_id, r.task_id, \
+     (SELECT t.project_id FROM tasks t WHERE t.id = r.task_id) AS project_id, r.sent, r.archived";
+
 pub async fn list(app: St, user: User) -> Res<Json<Vec<Reminder>>> {
     let rows = all(
         &app.db,
-        "SELECT id, title, description, remind_at, note_id, sent, archived FROM reminders WHERE user_id = ?1 ORDER BY sent, remind_at",
+        &format!("SELECT {REMINDER_COLUMNS} FROM reminders r WHERE r.user_id = ?1 ORDER BY r.sent, r.remind_at"),
         params![user.id.as_str()],
     )
     .await?;
@@ -42,6 +47,7 @@ pub struct ReminderReq {
     #[serde(default)]
     utc_offset: i64,
     note_id: Option<String>,
+    task_id: Option<String>,
 }
 
 impl ReminderReq {
@@ -57,9 +63,20 @@ impl ReminderReq {
 pub async fn create(app: St, user: User, Json(r): Json<ReminderReq>) -> Res<Json<Value>> {
     app.db
         .execute(
-            "INSERT INTO reminders (id, user_id, title, remind_at, note_id, description, utc_offset) \
-             SELECT ?5, ?1, ?2, ?3, ?4, ?6, ?7 WHERE ?4 IS NULL OR EXISTS (SELECT 1 FROM notes WHERE id = ?4 AND user_id = ?1)",
-            params![user.id.as_str(), r.validated_title()?, r.remind_at, r.note_id.clone(), uuid(), r.description.trim(), r.utc_offset],
+            "INSERT INTO reminders (id, user_id, title, remind_at, note_id, description, utc_offset, task_id) \
+             SELECT ?5, ?1, ?2, ?3, ?4, ?6, ?7, ?8 \
+             WHERE (?4 IS NULL OR EXISTS (SELECT 1 FROM notes WHERE id = ?4 AND user_id = ?1)) \
+             AND (?8 IS NULL OR EXISTS (SELECT 1 FROM tasks t JOIN projects p ON p.id = t.project_id WHERE t.id = ?8 AND p.user_id = ?1))",
+            params![
+                user.id.as_str(),
+                r.validated_title()?,
+                r.remind_at,
+                r.note_id.clone(),
+                uuid(),
+                r.description.trim(),
+                r.utc_offset,
+                r.task_id.clone()
+            ],
         )
         .await?;
     Ok(Json(json!({ "ok": true })))
@@ -101,12 +118,20 @@ pub struct Due {
     pub utc_offset: i64,
     pub note_id: Option<String>,
     pub note_title: Option<String>,
+    pub task_id: Option<String>,
+    project_id: Option<String>,
+    pub task_title: Option<String>,
+    pub project_name: Option<String>,
     email: String,
 }
 
 impl Due {
     pub fn path(&self) -> String {
-        self.note_id.as_ref().map_or_else(|| "/reminders".to_owned(), |id| format!("/notes/{id}"))
+        match (&self.project_id, &self.task_id, &self.note_id) {
+            (Some(project), Some(task), _) => format!("/projects/{project}?task={task}"),
+            (_, _, Some(note)) => format!("/notes/{note}"),
+            _ => "/reminders".to_owned(),
+        }
     }
 }
 
@@ -115,9 +140,11 @@ async fn tick(app: &App) -> Res<()> {
         &app.db,
         "SELECT r.id, r.title, r.description, r.remind_at, r.utc_offset, n.id AS note_id, u.email, \
          IFNULL(strftime('%Y-%m-%d %H:%M', r.remind_at + r.utc_offset * 60, 'unixepoch'), '') AS \"when\", \
-         CASE WHEN n.secret = 0 THEN n.title END AS note_title \
+         CASE WHEN n.secret = 0 THEN n.title END AS note_title, \
+         t.id AS task_id, t.title AS task_title, p.id AS project_id, p.name AS project_name \
          FROM reminders r JOIN users u ON u.id = r.user_id \
          LEFT JOIN notes n ON n.id = r.note_id AND n.trashed_at IS NULL \
+         LEFT JOIN tasks t ON t.id = r.task_id LEFT JOIN projects p ON p.id = t.project_id \
          WHERE r.sent = 0 AND r.archived = 0 AND r.remind_at <= unixepoch() AND IFNULL(r.retry_at, 0) <= unixepoch()",
         (),
     )

@@ -69,8 +69,13 @@ pub async fn rename_column(app: St, user: User, Path(id): Path<String>, Json(r):
 
 pub async fn remove_column(app: St, user: User, Path(id): Path<String>) -> Res<Json<Value>> {
     exec(&app.db, &format!("DELETE FROM board_columns WHERE id = ?1 AND {OWNED}"), params![id.as_str(), user.id.as_str()]).await?;
-    app.db.execute("DELETE FROM subtasks WHERE task_id IN (SELECT id FROM tasks WHERE column_id = ?1)", params![id.as_str()]).await?;
-    app.db.execute("DELETE FROM tasks WHERE column_id = ?1", params![id.as_str()]).await?;
+    for sql in [
+        "DELETE FROM reminders WHERE task_id IN (SELECT id FROM tasks WHERE column_id = ?1)",
+        "DELETE FROM subtasks WHERE task_id IN (SELECT id FROM tasks WHERE column_id = ?1)",
+        "DELETE FROM tasks WHERE column_id = ?1",
+    ] {
+        app.db.execute(sql, params![id.as_str()]).await?;
+    }
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -224,6 +229,7 @@ pub async fn task_action(app: St, user: User, Path((id, action)): Path<(String, 
 pub async fn remove_task(app: St, user: User, Path(id): Path<String>) -> Res<Json<Value>> {
     exec(&app.db, &format!("DELETE FROM tasks WHERE id = ?1 AND {OWNED}"), params![id.as_str(), user.id.as_str()]).await?;
     app.db.execute("DELETE FROM subtasks WHERE task_id = ?1", params![id.as_str()]).await?;
+    app.db.execute("DELETE FROM reminders WHERE task_id = ?1", params![id.as_str()]).await?;
     Ok(Json(json!({ "ok": true })))
 }
 

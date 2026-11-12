@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use icons::{
-    Archive, ArchiveRestore, ArrowLeft, Calendar, ChevronRight, CircleCheck, Download, Flag, FolderKanban, GripVertical, ListChecks,
+    Archive, ArchiveRestore, ArrowLeft, Bell, Calendar, ChevronRight, CircleCheck, Download, Flag, FolderKanban, GripVertical, ListChecks,
     Pencil, Plus, Share2, SquareKanban, Trash2,
 };
 use leptos::ev::SubmitEvent;
@@ -37,6 +37,7 @@ use crate::md;
 use crate::pages::editor::{RichEditor, SaveBadge};
 use crate::pages::files::FileManager;
 use crate::pages::notes::{NotesList, View};
+use crate::pages::reminders::{ReminderForm, TaskReminders};
 use crate::widgets::{
     Choice, Modal, Options, PageHeader, SearchBox, Segmented, ShareDialog, SortSelect, Toolbar, Ui, days_until, due_label,
     fmt_date, focus_if_new, has, owned, query_state, use_ui,
@@ -1193,6 +1194,8 @@ fn TaskModal(ctx: BoardCtx) -> impl IntoView {
         form.open.set(false);
         ctx.call(async move { api::post::<Value>(&format!("/api/tasks/{id}/action/{action}"), &()).await }, false);
     };
+    let remind_open = RwSignal::new(false);
+    let reminders_reload = RwSignal::new(0u32);
     let saver = AutoSave::new();
     Effect::new(move |_| {
         form.title.track();
@@ -1248,6 +1251,11 @@ fn TaskModal(ctx: BoardCtx) -> impl IntoView {
                             on_change=Callback::new(move |picked: String| form.column.set(picked.parse().unwrap_or_default()))
                         />
                     </div>
+                    <Button class="w-full" variant=ButtonVariant::Outline on:click=move |_| remind_open.set(true)>
+                        <Bell />
+                        "Add reminder"
+                    </Button>
+                    <TaskReminders task_id=Signal::derive(move || form.id.get().to_string()) reload=reminders_reload />
                     <div class="grid grid-cols-2 gap-2 pt-2 lg:mt-auto">
                         <Button class="w-full" variant=ButtonVariant::Outline on:click=archive>
                             {move || if form.archived.get() { view! { <ArchiveRestore /> }.into_any() } else { view! { <Archive /> }.into_any() }}
@@ -1261,6 +1269,20 @@ fn TaskModal(ctx: BoardCtx) -> impl IntoView {
                 </aside>
             </div>
         </Modal>
+        <div class="relative z-110">
+            <Modal open=remind_open title="Add reminder" class="max-w-[min(40rem,calc(100%-2rem))]">
+                {move || remind_open.get().then(|| view! {
+                    <ReminderForm
+                        task_id=form.id.get_untracked().to_string()
+                        title=form.title.get_untracked()
+                        on_done=Callback::new(move |_| {
+                            remind_open.set(false);
+                            reminders_reload.update(|n| *n += 1);
+                        })
+                    />
+                })}
+            </Modal>
+        </div>
     }
 }
 

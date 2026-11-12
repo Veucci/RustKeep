@@ -40,9 +40,10 @@ const ITEM_SELECT: &str = "SELECT 'task' AS kind, t.id, t.title, t.due AS day, N
      FROM subtasks s JOIN tasks t ON t.id = s.task_id JOIN projects p ON p.id = t.project_id \
      WHERE p.user_id = ?1 AND p.archived = 0 AND s.due IS NOT NULL \
      UNION ALL \
-     SELECT 'reminder', r.id, r.title, NULL, r.remind_at, NULL, NULL, r.note_id, \
-       IFNULL(CASE WHEN n.secret = 0 THEN n.title END, ''), r.sent \
-     FROM reminders r LEFT JOIN notes n ON n.id = r.note_id WHERE r.user_id = ?1 AND r.archived = 0";
+     SELECT 'reminder', r.id, r.title, NULL, r.remind_at, rt.project_id, rt.id, r.note_id, \
+       COALESCE(CASE WHEN n.secret = 0 THEN n.title END, rt.title, ''), r.sent \
+     FROM reminders r LEFT JOIN notes n ON n.id = r.note_id LEFT JOIN tasks rt ON rt.id = r.task_id \
+     WHERE r.user_id = ?1 AND r.archived = 0";
 
 #[derive(Serialize, Deserialize)]
 pub struct Event {

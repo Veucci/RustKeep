@@ -157,14 +157,21 @@ fn utc_label(minutes: i64) -> String {
 
 pub fn reminder_email(d: &Due, link: &str, logo_url: &str, origin: &str) -> String {
     let when = format!("{} ({})", d.when, utc_label(d.utc_offset));
-    let mut content = email_rows([("When", when.as_str())].into_iter().chain(d.note_title.as_deref().map(|t| ("Note", t))));
+    let linked = [("Note", &d.note_title), ("Task", &d.task_title), ("Project", &d.project_name)];
+    let mut content = email_rows(
+        [("When", when.as_str())].into_iter().chain(linked.iter().filter_map(|(k, v)| v.as_deref().map(|v| (*k, v)))),
+    );
     if !d.description.is_empty() {
         content.push_str(&format!(
             "<tr><td style=\"padding:22px 28px 0\"><div style=\"border:1px solid #e5e5e5;border-radius:10px;padding:2px 16px;word-break:break-word\">{}</div></td></tr>",
             email_html(&d.description, origin)
         ));
     }
-    let action = if d.note_id.is_some() { "Open note" } else { "Open reminders" };
+    let action = match (&d.task_id, &d.note_id) {
+        (Some(_), _) => "Open task",
+        (_, Some(_)) => "Open note",
+        _ => "Open reminders",
+    };
     let m = Email { title: &d.title, text: "This is the reminder you scheduled in RustKeep.", content, action, link, footer: "" };
     email(m, logo_url)
 }

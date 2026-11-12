@@ -243,6 +243,12 @@ pub fn DialogAction(
     }
 }
 
+fn is_topmost(content: NodeRef<leptos::html::Div>) -> bool {
+    let open = document().query_selector_all("[role=dialog][data-state=open]").ok();
+    let last = open.and_then(|list| list.item(list.length().wrapping_sub(1)));
+    content.get_untracked().zip(last).is_some_and(|(node, last)| last.is_same_node(Some(&node)))
+}
+
 #[component]
 pub fn ControlledDialog(
     children: ChildrenFn,
@@ -269,8 +275,10 @@ pub fn ControlledDialog(
         }
         is_open
     });
+    let content = NodeRef::<leptos::html::Div>::new();
     let escape = window_event_listener(leptos::ev::keydown, move |ev| {
-        if ev.key() == "Escape" && open.get_untracked() {
+        if ev.key() == "Escape" && !ev.default_prevented() && open.get_untracked() && is_topmost(content) {
+            ev.prevent_default();
             on_close.run(());
         }
     });
@@ -294,6 +302,7 @@ pub fn ControlledDialog(
             }
         />
         <div
+            node_ref=content
             data-name=format!("{data_name_prefix}Content")
             class=merged_class
             role="dialog"
