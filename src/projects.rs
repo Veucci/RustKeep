@@ -106,6 +106,8 @@ pub async fn remove(app: St, user: User, Path(id): Path<String>) -> Res<Json<Val
     exec(&app.db, "DELETE FROM projects WHERE id = ?1 AND user_id = ?2", params![id.as_str(), user.id.as_str()]).await?;
     for sql in [
         "DELETE FROM reminders WHERE task_id IN (SELECT id FROM tasks WHERE project_id = ?1)",
+        "DELETE FROM task_field_values WHERE task_id IN (SELECT id FROM tasks WHERE project_id = ?1)",
+        "DELETE FROM custom_fields WHERE project_id = ?1",
         "DELETE FROM subtasks WHERE task_id IN (SELECT id FROM tasks WHERE project_id = ?1)",
         "DELETE FROM tasks WHERE project_id = ?1",
         "DELETE FROM board_columns WHERE project_id = ?1",
@@ -119,10 +121,28 @@ pub async fn remove(app: St, user: User, Path(id): Path<String>) -> Res<Json<Val
 
 #[derive(Deserialize)]
 struct TaskRow {
+    id: String,
     title: String,
     description: String,
     column: String,
     due: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct FieldRow {
+    id: String,
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct ValueRow {
+    task_id: String,
+    field_id: String,
+    value: String,
+}
+
+fn joined_values(values: &[ValueRow], task: &str, field: &str) -> String {
+    values.iter().filter(|v| v.task_id == task && v.field_id == field).map(|v| v.value.as_str()).collect::<Vec<_>>().join(", ")
 }
 
 #[derive(Deserialize)]
@@ -151,8 +171,16 @@ pub async fn export(app: St, user: User, Path(id): Path<String>) -> Res<impl Int
     let p = find(&app, &user, &id).await?;
     let tasks: Vec<TaskRow> = all(
         &app.db,
-        "SELECT t.title, t.description, c.name AS column, t.due FROM tasks t \
+        "SELECT t.id, t.title, t.description, c.name AS column, t.due FROM tasks t \
          JOIN board_columns c ON c.id = t.column_id WHERE t.project_id = ?1 ORDER BY c.position, t.position, t.created",
+        params![id.as_str()],
+    )
+    .await?;
+    let fields: Vec<FieldRow> =
+        all(&app.db, "SELECT id, name FROM custom_fields WHERE project_id = ?1 ORDER BY position, created", params![id.as_str()]).await?;
+    let values: Vec<ValueRow> = all(
+        &app.db,
+        "SELECT v.task_id, v.field_id, v.value FROM task_field_values v JOIN tasks t ON t.id = v.task_id WHERE t.project_id = ?1",
         params![id.as_str()],
     )
     .await?;
@@ -170,10 +198,14 @@ pub async fn export(app: St, user: User, Path(id): Path<String>) -> Res<impl Int
     ws.write_row(1, 0, [p.name.as_str(), p.description.as_str(), p.status.as_str()])?;
     ws.write_number(1, 3, p.tasks as f64)?.write_number(1, 4, p.done as f64)?;
 
-    let ws = sheet(&mut wb, "Tasks", &["Title", "Column", "Due date", "Description"])?;
+    let mut headers = vec!["Title", "Column", "Due date", "Description"];
+    headers.extend(fields.iter().map(|f| f.name.as_str()));
+    let ws = sheet(&mut wb, "Tasks", &headers)?;
     for (i, t) in tasks.iter().enumerate() {
         let due = t.due.as_deref().unwrap_or("");
         ws.write_row(i as u32 + 1, 0, [t.title.as_str(), t.column.as_str(), due, t.description.as_str()])?;
+        let cells = fields.iter().map(|f| joined_values(&values, &t.id, &f.id));
+        ws.write_row(i as u32 + 1, 4, cells)?;
     }
 
     let date = Format::new().set_num_format("yyyy-mm-dd hh:mm");

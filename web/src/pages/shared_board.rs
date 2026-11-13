@@ -9,7 +9,7 @@ use crate::components::ui::card::Card;
 use crate::components::ui::theme_toggle::ThemeToggle;
 use crate::md;
 use crate::pages::drive::{FileItem, Kind, KindIcon, Preview};
-use crate::pages::projects::{DueChip, priority_class, priority_label};
+use crate::pages::projects::{DueChip, Field, FieldChips, FieldValue, priority_class, priority_label};
 use crate::widgets::{ListSkeleton, LogoTile, Modal, Options, Segmented, fmt_size};
 
 const TABS: Options = &[("board", "Board"), ("files", "Files")];
@@ -30,6 +30,8 @@ struct BoardTask {
     description: String,
     due: Option<String>,
     priority: i64,
+    #[serde(default)]
+    fields: Vec<FieldValue>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -45,6 +47,8 @@ struct SharedProject {
     name: String,
     description: String,
     columns: Vec<Lane>,
+    #[serde(default)]
+    fields: Vec<Field>,
     tasks: Vec<BoardTask>,
     subtasks: Vec<Sub>,
     files: Vec<FileItem>,
@@ -174,6 +178,7 @@ fn SharedCard(card: BoardTask, project: StoredValue<SharedProject>, show: Callba
                         {s}
                     </span>
                 })}
+                <FieldChips fields=project.with_value(|p| p.fields.clone()) values=card.fields.clone() />
             </div>
         </button>
     }
@@ -195,6 +200,7 @@ fn TaskDetail(card: BoardTask, project: StoredValue<SharedProject>) -> impl Into
                     </span>
                 </Show>
                 {card.due.map(|d| view! { <DueChip due=d done /> })}
+                <FieldChips fields=project.with_value(|p| p.fields.clone()) values=card.fields.clone() />
             </div>
             <Show when={
                 let empty = card.description.trim().is_empty();

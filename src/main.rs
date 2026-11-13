@@ -6,6 +6,7 @@ mod calendar;
 mod convert;
 mod dashboard;
 mod export;
+mod fields;
 mod files;
 mod folders;
 mod images;
@@ -88,6 +89,12 @@ CREATE TABLE IF NOT EXISTS subtasks (
   id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id), title TEXT NOT NULL,
   done INTEGER NOT NULL DEFAULT 0, position INTEGER NOT NULL DEFAULT 0, created INTEGER NOT NULL DEFAULT (unixepoch()),
   description TEXT NOT NULL DEFAULT '', due TEXT, priority INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS custom_fields (
+  id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), name TEXT NOT NULL,
+  position INTEGER NOT NULL DEFAULT 0, created INTEGER NOT NULL DEFAULT (unixepoch()));
+CREATE TABLE IF NOT EXISTS task_field_values (
+  id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id), field_id TEXT NOT NULL REFERENCES custom_fields(id),
+  value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS notes (
   id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), project_id TEXT REFERENCES projects(id),
   title TEXT NOT NULL DEFAULT '',
@@ -139,6 +146,8 @@ CREATE INDEX IF NOT EXISTS upload_links_user ON upload_links(user_id);
 CREATE INDEX IF NOT EXISTS reminders_due ON reminders(sent, remind_at);
 CREATE INDEX IF NOT EXISTS tasks_project ON tasks(project_id, column_id, position);
 CREATE INDEX IF NOT EXISTS subtasks_task ON subtasks(task_id, position);
+CREATE INDEX IF NOT EXISTS custom_fields_project ON custom_fields(project_id, position);
+CREATE INDEX IF NOT EXISTS task_field_values_task ON task_field_values(task_id);
 CREATE INDEX IF NOT EXISTS events_user ON events(user_id, start_at);
 CREATE UNIQUE INDEX IF NOT EXISTS events_google ON events(user_id, google_id);
 ";
@@ -230,6 +239,8 @@ fn api() -> Router<Arc<App>> {
         .route("/api/projects/{id}/tasks", get(board::tasks).post(board::create_task))
         .route("/api/board/columns", get(board::overview_columns))
         .route("/api/board/tasks", get(board::overview_tasks))
+        .route("/api/projects/{id}/fields", get(fields::list).post(fields::create))
+        .route("/api/fields/{id}", put(fields::rename).delete(fields::remove))
         .route("/api/columns/{id}", put(board::rename_column).delete(board::remove_column))
         .route("/api/columns/{id}/move", post(board::move_column))
         .route("/api/columns/{id}/done", put(board::set_column_done))

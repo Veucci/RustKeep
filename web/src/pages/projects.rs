@@ -1,10 +1,10 @@
 use std::cmp::Reverse;
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::time::Duration;
 
 use icons::{
     Archive, ArchiveRestore, ArrowLeft, Bell, Calendar, ChevronRight, CircleCheck, Download, Flag, FolderKanban, GripVertical, ListChecks,
-    Pencil, Plus, Share2, SquareKanban, Trash2,
+    Pencil, Plus, Share2, SquareKanban, Tags, Trash2,
 };
 use leptos::ev::SubmitEvent;
 use leptos::html;
@@ -16,6 +16,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use wasm_bindgen::JsCast;
 use web_sys::{DragEvent, Element, KeyboardEvent, MouseEvent, PointerEvent};
+
+mod fields;
+
+pub use fields::{Field, FieldChips, FieldValue};
+use fields::{CustomFields, FieldFilter, FieldInput};
 
 use crate::api::{self, AutoSave, SaveState};
 use crate::id::Id;
@@ -102,6 +107,8 @@ struct Task {
     subtasks_done: i64,
     #[serde(default, skip_serializing)]
     archived: i64,
+    #[serde(default)]
+    fields: Vec<FieldValue>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -316,6 +323,10 @@ fn ProjectView(project: ProjectItem) -> impl IntoView {
     let share_token = RwSignal::new(project.share_token);
     let share_open = RwSignal::new(false);
     let (tab, set_tab) = query_state("tab", "board");
+    let fields_open = RwSignal::new(false);
+    let fields = LocalResource::new(move || async move {
+        ui.run(api::get::<Vec<Field>>(&format!("/api/projects/{id}/fields"))).await.unwrap_or_default()
+    });
     Effect::new(move |_| ui.set_crumb(name.get()));
     let save = move || {
         spawn_local(async move {
@@ -377,6 +388,10 @@ fn ProjectView(project: ProjectItem) -> impl IntoView {
                         save();
                     })
                 />
+                <Button variant=ButtonVariant::Outline attr:title="Custom fields" on:click=move |_| fields_open.set(true)>
+                    <Tags />
+                    <span class="hidden sm:inline">"Custom fields"</span>
+                </Button>
                 <Button variant=ButtonVariant::Outline attr:title="Share" on:click=move |_| share_open.set(true)>
                     <Share2 />
                     <span class="hidden sm:inline">"Share"</span>
@@ -397,9 +412,10 @@ fn ProjectView(project: ProjectItem) -> impl IntoView {
             {move || match tab.get().as_str() {
                 "notes" => view! { <div class="page-enter"><NotesList view=View::Project(id) /></div> }.into_any(),
                 "files" => view! { <div class="flex flex-col gap-4 page-enter"><FileManager project=id /></div> }.into_any(),
-                _ => view! { <Board project=id /> }.into_any(),
+                _ => view! { <Board project=id fields /> }.into_any(),
             }}
         </div>
+        <CustomFields project=id open=fields_open fields />
         <ShareDialog open=share_open api_path=format!("/api/projects/{id}/share") link_prefix="/b/" token=share_token />
     }
 }
@@ -408,6 +424,7 @@ fn ProjectView(project: ProjectItem) -> impl IntoView {
 struct BoardCtx {
     project: Option<Id>,
     columns: LocalResource<Vec<Column>>,
+    fields: Signal<Vec<Field>>,
     tasks: RwSignal<Vec<Task>>,
     source: LocalResource<Option<Vec<Task>>>,
     dragging: RwSignal<Option<Id>>,
@@ -565,6 +582,12 @@ impl BoardCtx {
     fn is_done(self, column: Id) -> bool {
         self.columns.get().unwrap_or_default().iter().any(|c| c.id == column && c.done == 1)
     }
+
+    fn field_values(self, field: Id) -> Vec<String> {
+        let found: BTreeSet<String> =
+            self.tasks.with(|list| list.iter().flat_map(|t| &t.fields).filter(|v| v.field_id == field).map(|v| v.value.clone()).collect());
+        found.into_iter().collect()
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -578,6 +601,7 @@ struct TaskForm {
     due: RwSignal<String>,
     priority: RwSignal<i64>,
     archived: RwSignal<bool>,
+    fields: RwSignal<Vec<FieldValue>>,
     saved: StoredValue<Value>,
 }
 
@@ -593,6 +617,7 @@ impl TaskForm {
             due: RwSignal::new(String::new()),
             priority: RwSignal::new(0),
             archived: RwSignal::new(false),
+            fields: RwSignal::new(Vec::new()),
             saved: StoredValue::new(Value::Null),
         }
     }
@@ -606,6 +631,7 @@ impl TaskForm {
         self.due.set(t.due.unwrap_or_default());
         self.priority.set(t.priority);
         self.archived.set(t.archived == 1);
+        self.fields.set(t.fields);
         self.saved.set_value(self.payload());
         self.open.set(true);
     }
@@ -619,6 +645,7 @@ impl TaskForm {
             description: self.description.get_untracked(),
             due: (!due.is_empty()).then_some(due),
             priority: self.priority.get_untracked(),
+            fields: self.fields.get_untracked(),
             ..Default::default()
         }
     }
@@ -636,9 +663,16 @@ struct Filters {
     due: Signal<String>,
     order: Signal<String>,
     state: Signal<String>,
+    fields: RwSignal<HashMap<Id, HashSet<String>>>,
 }
 
 impl Filters {
+    fn fields_match(&self, t: &Task) -> bool {
+        self.fields.with(|picks| {
+            picks.iter().all(|(field, wanted)| wanted.is_empty() || t.fields.iter().any(|v| v.field_id == *field && wanted.contains(&v.value)))
+        })
+    }
+
     fn keep(&self, t: &Task) -> bool {
         let days = t.due.as_deref().map(days_until);
         let due_ok = match self.due.get().as_str() {
@@ -650,7 +684,7 @@ impl Filters {
         let only = self.project_mode.get() == "only";
         let project_ok = self.projects.with(|p| p.is_empty() || p.contains(t.project_id.as_str()) == only);
         let state_ok = (t.archived == 1) == (self.state.get() == "archived");
-        state_ok && due_ok && project_ok && (has(&t.title, &self.q.get()) || has(&t.description, &self.q.get()))
+        state_ok && due_ok && project_ok && self.fields_match(t) && (has(&t.title, &self.q.get()) || has(&t.description, &self.q.get()))
     }
 
     fn apply(&self, mut list: Vec<Task>) -> Vec<Task> {
@@ -666,7 +700,7 @@ impl Filters {
 }
 
 #[component]
-fn Board(#[prop(optional)] project: Option<Id>) -> impl IntoView {
+fn Board(#[prop(optional)] project: Option<Id>, #[prop(optional)] fields: Option<LocalResource<Vec<Field>>>) -> impl IntoView {
     let ui = use_ui();
     let path = move |what: &str| project.map_or(format!("/api/board/{what}"), |p| format!("/api/projects/{p}/{what}"));
     let columns = LocalResource::new(move || async move { ui.run(api::get::<Vec<Column>>(&path("columns"))).await.unwrap_or_default() });
@@ -675,6 +709,7 @@ fn Board(#[prop(optional)] project: Option<Id>) -> impl IntoView {
     let ctx = BoardCtx {
         project,
         columns,
+        fields: Signal::derive(move || fields.and_then(|f| f.get()).unwrap_or_default()),
         tasks,
         source,
         dragging: RwSignal::new(None),
@@ -708,6 +743,7 @@ fn Board(#[prop(optional)] project: Option<Id>) -> impl IntoView {
         due,
         order,
         state,
+        fields: RwSignal::new(HashMap::new()),
     };
 
     view! {
@@ -720,7 +756,12 @@ fn Board(#[prop(optional)] project: Option<Id>) -> impl IntoView {
                     <ProjectFilter filters />
                 </Show>
             </div>
-            <SortSelect options=ORDER value=order on_change=set_order />
+            <div class="flex flex-wrap gap-2 items-center">
+                <For each=move || ctx.fields.get() key=Field::clone let(field)>
+                    <FieldFilter field ctx filters />
+                </For>
+                <SortSelect options=ORDER value=order on_change=set_order />
+            </div>
         </Toolbar>
         <div
             node_ref=ctx.board
@@ -804,7 +845,7 @@ fn ProjectFilter(filters: Filters) -> impl IntoView {
                 </div>
                 <div class="flex overflow-y-auto flex-col p-1 max-h-72">
                     <For each=visible key=|(id, _)| id.clone() let((id, name))>
-                        <ProjectOption id name selected=filters.projects />
+                        <SetOption id name selected=filters.projects />
                     </For>
                     <Show when=move || visible().is_empty()>
                         <p class="py-4 text-sm text-center text-muted-foreground">"No projects found"</p>
@@ -823,7 +864,7 @@ fn ProjectFilter(filters: Filters) -> impl IntoView {
 }
 
 #[component]
-fn ProjectOption(id: String, name: String, selected: RwSignal<HashSet<String>>) -> impl IntoView {
+fn SetOption(id: String, name: String, selected: RwSignal<HashSet<String>>) -> impl IntoView {
     let id = StoredValue::new(id);
     let checked = Signal::derive(move || selected.with(|s| id.with_value(|id| s.contains(id))));
     let toggle = move |_| {
@@ -1098,6 +1139,7 @@ fn TaskCard(task: Task, lane: StoredValue<Column>, ctx: BoardCtx) -> impl IntoVi
     let column = task.column_id;
     let done = Signal::derive(move || ctx.is_done(column));
     let project_name = ctx.project.is_none().then_some(task.project);
+    let values = StoredValue::new(task.fields);
     let before = move || ctx.over_task.get() == Some(id) && ctx.dragging.get().is_some_and(|d| d != id);
     let label = task.title.clone();
 
@@ -1162,6 +1204,7 @@ fn TaskCard(task: Task, lane: StoredValue<Column>, ctx: BoardCtx) -> impl IntoVi
                             {s}
                         </span>
                     })}
+                    {move || view! { <FieldChips fields=ctx.fields.get() values=values.get_value() /> }}
                     <span class="ml-auto">{created}</span>
                 </div>
                 {project_name.map(|name| view! {
@@ -1203,6 +1246,7 @@ fn TaskModal(ctx: BoardCtx) -> impl IntoView {
         form.due.track();
         form.priority.track();
         form.column.track();
+        form.fields.track();
         let body = form.payload();
         if !form.open.get_untracked() || form.saved.with_value(|s| *s == body) {
             return;
@@ -1251,6 +1295,9 @@ fn TaskModal(ctx: BoardCtx) -> impl IntoView {
                             on_change=Callback::new(move |picked: String| form.column.set(picked.parse().unwrap_or_default()))
                         />
                     </div>
+                    <For each=move || ctx.fields.get() key=Field::clone let(field)>
+                        <FieldInput field ctx />
+                    </For>
                     <Button class="w-full" variant=ButtonVariant::Outline on:click=move |_| remind_open.set(true)>
                         <Bell />
                         "Add reminder"

@@ -267,8 +267,7 @@ pub fn MultiSelectContent(children: Children, #[prop(optional, into)] class: Str
                             }}
                         }};
 
-                        trigger.addEventListener('click', (e) => {{
-                            e.stopPropagation();
+                        trigger.addEventListener('click', () => {{
                             if (isOpen) {{
                                 closeMultiSelect();
                             }} else {{

@@ -8,11 +8,12 @@ use serde_json::{Value, json};
 use crate::St;
 use crate::auth::User;
 use crate::files::{Stored, serve};
+use crate::fields::{FIELD_SELECT, Field};
 use crate::folders::PublicFile;
 use crate::projects::find;
 use crate::util::{Res, all, archive_set, bad, exec, one, uuid};
 
-const OWNED: &str = "project_id IN (SELECT id FROM projects WHERE user_id = ?2)";
+pub const OWNED: &str = "project_id IN (SELECT id FROM projects WHERE user_id = ?2)";
 const OWNED_TASKS: &str = "(SELECT t.id FROM tasks t JOIN projects p ON p.id = t.project_id WHERE p.user_id = ?2)";
 const COLUMN_IN_PROJECT: &str = "EXISTS (SELECT 1 FROM board_columns c JOIN projects p ON p.id = c.project_id \
      WHERE c.id = ?3 AND p.id = ?1 AND p.user_id = ?2)";
@@ -40,30 +41,32 @@ pub async fn overview_columns(app: St, user: User) -> Res<Json<Vec<Column>>> {
 }
 
 #[derive(Deserialize)]
-pub struct ColumnReq {
+pub struct NameReq {
     name: String,
 }
 
-fn column_name(r: &ColumnReq) -> Res<&str> {
-    let name = r.name.trim();
-    if name.is_empty() { Err(bad("Column name is required")) } else { Ok(name) }
+impl NameReq {
+    pub fn required(&self, missing: &str) -> Res<&str> {
+        let name = self.name.trim();
+        if name.is_empty() { Err(bad(missing)) } else { Ok(name) }
+    }
 }
 
-pub async fn create_column(app: St, user: User, Path(id): Path<String>, Json(r): Json<ColumnReq>) -> Res<Json<Value>> {
+pub async fn create_column(app: St, user: User, Path(id): Path<String>, Json(r): Json<NameReq>) -> Res<Json<Value>> {
     find(&app, &user, &id).await?;
     app.db
         .execute(
             "INSERT INTO board_columns (id, project_id, name, position) \
              SELECT ?3, ?1, ?2, COALESCE(MAX(position) + 1, 0) FROM board_columns WHERE project_id = ?1",
-            params![id.as_str(), column_name(&r)?, uuid()],
+            params![id.as_str(), r.required("Column name is required")?, uuid()],
         )
         .await?;
     Ok(Json(json!({ "ok": true })))
 }
 
-pub async fn rename_column(app: St, user: User, Path(id): Path<String>, Json(r): Json<ColumnReq>) -> Res<Json<Value>> {
+pub async fn rename_column(app: St, user: User, Path(id): Path<String>, Json(r): Json<NameReq>) -> Res<Json<Value>> {
     let sql = format!("UPDATE board_columns SET name = ?3 WHERE id = ?1 AND {OWNED}");
-    exec(&app.db, &sql, params![id.as_str(), user.id.as_str(), column_name(&r)?]).await?;
+    exec(&app.db, &sql, params![id.as_str(), user.id.as_str(), r.required("Column name is required")?]).await?;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -71,6 +74,7 @@ pub async fn remove_column(app: St, user: User, Path(id): Path<String>) -> Res<J
     exec(&app.db, &format!("DELETE FROM board_columns WHERE id = ?1 AND {OWNED}"), params![id.as_str(), user.id.as_str()]).await?;
     for sql in [
         "DELETE FROM reminders WHERE task_id IN (SELECT id FROM tasks WHERE column_id = ?1)",
+        "DELETE FROM task_field_values WHERE task_id IN (SELECT id FROM tasks WHERE column_id = ?1)",
         "DELETE FROM subtasks WHERE task_id IN (SELECT id FROM tasks WHERE column_id = ?1)",
         "DELETE FROM tasks WHERE column_id = ?1",
     ] {
@@ -137,12 +141,15 @@ pub struct Task {
     archived: i64,
     subtasks: i64,
     subtasks_done: i64,
+    #[serde(deserialize_with = "crate::fields::json_text")]
+    fields: Value,
 }
 
 const TASK_SELECT: &str = "SELECT t.id, t.column_id, t.project_id, p.name AS project, t.title, t.description, t.due, \
      t.created, t.priority, t.archived, \
      (SELECT COUNT(*) FROM subtasks s WHERE s.task_id = t.id) AS subtasks, \
-     (SELECT COUNT(*) FROM subtasks s WHERE s.task_id = t.id AND s.done = 1) AS subtasks_done \
+     (SELECT COUNT(*) FROM subtasks s WHERE s.task_id = t.id AND s.done = 1) AS subtasks_done, \
+     (SELECT json_group_array(json_object('field_id', v.field_id, 'value', v.value)) FROM task_field_values v WHERE v.task_id = t.id) AS fields \
      FROM tasks t JOIN projects p ON p.id = t.project_id WHERE p.user_id = ?1";
 
 pub async fn tasks(app: St, user: User, Path(id): Path<String>) -> Res<Json<Vec<Task>>> {
@@ -164,6 +171,7 @@ pub struct TaskReq {
     due: Option<String>,
     #[serde(default)]
     priority: i64,
+    fields: Option<Vec<crate::fields::FieldValue>>,
 }
 
 const NEXT_POSITION: &str = "(SELECT COALESCE(MAX(position) + 1, 0) FROM tasks WHERE column_id = ?3)";
@@ -192,6 +200,9 @@ pub async fn update_task(app: St, user: User, Path(id): Path<String>, Json(r): J
     );
     let p = params![id.as_str(), user.id.as_str(), r.column_id, r.title.trim(), r.description, r.due, r.priority.clamp(0, 3)];
     exec(&app.db, &sql, p).await?;
+    if let Some(values) = &r.fields {
+        crate::fields::replace_values(&app.db, &id, values).await?;
+    }
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -230,6 +241,7 @@ pub async fn remove_task(app: St, user: User, Path(id): Path<String>) -> Res<Jso
     exec(&app.db, &format!("DELETE FROM tasks WHERE id = ?1 AND {OWNED}"), params![id.as_str(), user.id.as_str()]).await?;
     app.db.execute("DELETE FROM subtasks WHERE task_id = ?1", params![id.as_str()]).await?;
     app.db.execute("DELETE FROM reminders WHERE task_id = ?1", params![id.as_str()]).await?;
+    app.db.execute("DELETE FROM task_field_values WHERE task_id = ?1", params![id.as_str()]).await?;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -307,6 +319,7 @@ pub async fn public_board(app: St, Path(t): Path<String>) -> Res<Json<Value>> {
     let p: SharedProject = one(&app.db, SHARED_PROJECT, params![t.as_str()]).await?;
     let owner = || params![p.user_id.as_str(), p.id.as_str()];
     let columns: Vec<Column> = all(&app.db, &format!("{COLUMN_SELECT} AND p.id = ?2 ORDER BY c.position"), owner()).await?;
+    let fields: Vec<Field> = all(&app.db, FIELD_SELECT, owner()).await?;
     let sql = format!("{TASK_SELECT} AND p.id = ?2 AND t.archived = 0 ORDER BY t.position, t.created");
     let mut tasks: Vec<Task> = all(&app.db, &sql, owner()).await?;
     let mut subtasks: Vec<Subtask> = all(
@@ -327,7 +340,7 @@ pub async fn public_board(app: St, Path(t): Path<String>) -> Res<Json<Value>> {
         *d = d.replace("/api/files/", &public);
     }
     Ok(Json(json!({
-        "name": p.name, "description": p.description, "columns": columns, "tasks": tasks, "subtasks": subtasks, "files": files,
+        "name": p.name, "description": p.description, "columns": columns, "fields": fields, "tasks": tasks, "subtasks": subtasks, "files": files,
     })))
 }
 
