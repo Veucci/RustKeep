@@ -10,7 +10,7 @@ mod palette;
 mod widgets;
 
 use icons::{
-    Archive, ArrowLeft, Bell, CalendarDays, Folder, KeyRound, LayoutDashboard, Lock, LogOut, Menu, Notebook, PanelLeft, Search,
+    Archive, ArrowLeft, Bell, CalendarDays, Folder, Globe, KeyRound, LayoutDashboard, Lock, LogOut, Menu, Notebook, PanelLeft, Search,
     SquareKanban, Trash2,
 };
 use leptos::ev;
@@ -66,6 +66,7 @@ fn App() -> impl IntoView {
                 <Route path=path!("/d/:token") view=pages::shared_folder::SharedFolder />
                 <Route path=path!("/b/:token") view=pages::shared_board::SharedBoard />
                 <Route path=path!("/u/:token") view=pages::upload::UploadPage />
+                <Route path=path!("/site/*rest") view=pages::site_gate::SiteGate />
                 <ParentRoute path=path!("") view=Layout>
                     <Route path=path!("") view=pages::dashboard::Dashboard />
                     <Route path=path!("notes") view=|| view! { <pages::notes::NotesList view=View::Active /> } />
@@ -77,6 +78,8 @@ fn App() -> impl IntoView {
                     <Route path=path!("projects/overview") view=pages::projects::ProjectsOverview />
                     <Route path=path!("projects/:id") view=pages::projects::ProjectDetail />
                     <Route path=path!("files") view=pages::files::FilesPage />
+                    <Route path=path!("sites") view=pages::sites::Sites />
+                    <Route path=path!("sites/:id") view=pages::sites::SiteDetail />
                     <Route path=path!("vault") view=pages::vault::Vault />
                     <Route path=path!("reminders") view=pages::reminders::Reminders />
                     <Route path=path!("calendar") view=pages::calendar::CalendarPage />
@@ -106,6 +109,7 @@ fn section(path: &str) -> (&'static str, &'static str) {
         "secret" => ("Secret notes", "/secret"),
         "projects" => ("Projects", "/projects"),
         "files" => ("Files", "/files"),
+        "sites" => ("Sites", "/sites"),
         "reminders" => ("Reminders", "/reminders"),
         "calendar" => ("Calendar", "/calendar"),
         "vault" => ("Vault", "/vault"),
@@ -244,6 +248,7 @@ fn NavBody() -> impl IntoView {
                 <NavItem path="/notes" label="Notes"><Notebook /></NavItem>
                 <NavItem path="/projects" label="Projects"><SquareKanban /></NavItem>
                 <NavItem path="/files" label="Files"><Folder /></NavItem>
+                <NavItem path="/sites" label="Sites"><Globe /></NavItem>
                 <NavItem path="/reminders" label="Reminders"><Bell /></NavItem>
             </NavGroup>
             <NavGroup label="Security">

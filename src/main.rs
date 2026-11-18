@@ -18,6 +18,7 @@ mod reminders;
 mod requests;
 mod reset;
 mod signup;
+mod sites;
 mod storage;
 mod templates;
 mod util;
@@ -50,6 +51,7 @@ pub struct App {
     pub crypto: util::Crypto,
     pub storage: storage::Storage,
     pub login_attempts: Mutex<HashMap<String, (u32, i64)>>,
+    pub index: String,
     _database: libsql::Database,
 }
 
@@ -139,6 +141,14 @@ CREATE TABLE IF NOT EXISTS google_links (
   id TEXT PRIMARY KEY, user_id TEXT NOT NULL UNIQUE REFERENCES users(id), email TEXT NOT NULL,
   refresh_token TEXT NOT NULL, access_token TEXT, access_expires INTEGER NOT NULL DEFAULT 0, synced INTEGER,
   created INTEGER NOT NULL DEFAULT (unixepoch()));
+CREATE TABLE IF NOT EXISTS sites (
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), name TEXT NOT NULL UNIQUE,
+  enabled INTEGER NOT NULL DEFAULT 1, password TEXT, expires INTEGER, views INTEGER NOT NULL DEFAULT 0,
+  created INTEGER NOT NULL DEFAULT (unixepoch()), updated INTEGER NOT NULL DEFAULT (unixepoch()));
+CREATE TABLE IF NOT EXISTS site_files (
+  id TEXT PRIMARY KEY, site_id TEXT NOT NULL REFERENCES sites(id), path TEXT NOT NULL, key TEXT NOT NULL,
+  size INTEGER NOT NULL, mime TEXT NOT NULL, updated INTEGER NOT NULL DEFAULT (unixepoch()),
+  created INTEGER NOT NULL DEFAULT (unixepoch()));
 CREATE INDEX IF NOT EXISTS notes_user ON notes(user_id);
 CREATE INDEX IF NOT EXISTS files_user ON files(user_id, folder_id);
 CREATE INDEX IF NOT EXISTS folders_parent ON folders(parent_id);
@@ -150,6 +160,8 @@ CREATE INDEX IF NOT EXISTS custom_fields_project ON custom_fields(project_id, po
 CREATE INDEX IF NOT EXISTS task_field_values_task ON task_field_values(task_id);
 CREATE INDEX IF NOT EXISTS events_user ON events(user_id, start_at);
 CREATE UNIQUE INDEX IF NOT EXISTS events_google ON events(user_id, google_id);
+CREATE INDEX IF NOT EXISTS sites_user ON sites(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS site_files_path ON site_files(site_id, path);
 ";
 
 fn env(key: &str) -> Option<String> {
@@ -210,6 +222,8 @@ fn api() -> Router<Arc<App>> {
         .route("/api/files/{id}", put(files::update).delete(files::remove))
         .route("/api/files/{id}/action/{action}", post(files::action))
         .route("/api/files/{id}/raw", get(files::raw))
+        .route("/api/files/{id}/preview", get(files::preview))
+        .route("/api/files/{id}/content", put(files::put_content).layer(DefaultBodyLimit::disable()))
         .route("/api/files/{id}/convert", get(files::formats).post(files::convert))
         .route("/api/files/{id}/share", post(files::share).delete(files::unshare))
         .route("/api/public/files/{token}", get(files::public_raw))
@@ -223,6 +237,22 @@ fn api() -> Router<Arc<App>> {
         .route("/api/upload-links/{id}", put(requests::update).delete(requests::remove))
         .route("/api/public/uploads/{token}", get(requests::public_get).post(requests::public_upload).layer(DefaultBodyLimit::disable()))
         .route("/api/public/uploads/{token}/unlock", post(requests::unlock))
+        .route("/api/sites", get(sites::list).post(sites::create))
+        .route("/api/sites/{id}", put(sites::update).delete(sites::remove))
+        .route("/api/sites/{id}/files", get(sites::files).post(sites::upload).layer(DefaultBodyLimit::disable()))
+        .route("/api/sites/{id}/file", get(sites::raw).put(sites::put_file).layer(DefaultBodyLimit::disable()))
+        .route("/api/sites/{id}/move", post(sites::move_files))
+        .route("/api/sites/{id}/delete", post(sites::delete_files))
+        .route("/api/sites/{id}/preview", get(sites::preview))
+        .route("/api/public/sites/{name}", get(sites::public_get))
+        .route("/api/public/sites/{name}/unlock", post(sites::unlock))
+        .route("/site/{name}", get(sites::redirect))
+        .route("/site/{name}/", get(sites::serve))
+        .route("/site/{name}/{*path}", get(sites::serve))
+        .route("/preview/s/{token}", get(sites::redirect))
+        .route("/preview/s/{token}/", get(sites::preview_serve))
+        .route("/preview/s/{token}/{*path}", get(sites::preview_serve))
+        .route("/preview/f/{token}/{*path}", get(files::preview_serve))
         .route("/api/vault", get(vault::list).post(vault::create))
         .route("/api/vault/{id}", get(vault::reveal).delete(vault::remove))
         .route("/api/reminders", get(reminders::list).post(reminders::create))
@@ -287,12 +317,16 @@ async fn main() {
     if let Err(e) = migrate::migrate(&db, SCHEMA, backup.as_deref()).await {
         panic!("schema migration failed: {}", e.1);
     }
+    db.execute("UPDATE site_files SET created = updated WHERE created > updated", ()).await.expect("align site file dates");
 
     let static_dir = PathBuf::from(env("STATIC_DIR").unwrap_or_else(|| "web/dist".into()));
     let index = std::fs::read_to_string(static_dir.join("index.html"))
         .unwrap_or_else(|_| "RustKeep: web/dist not found, run `trunk build` first.".into())
         .replace("__BASE__", &cfg.base);
-    let page = move || std::future::ready(Html(index.clone()));
+    let page = {
+        let index = index.clone();
+        move || std::future::ready(Html(index.clone()))
+    };
     let spa = ServeDir::new(static_dir)
         .precompressed_gzip()
         .append_index_html_on_directories(false)
@@ -302,7 +336,7 @@ async fn main() {
     let base = cfg.base.clone();
     let crypto = util::Crypto::new(&secret_key(&cfg.data_dir));
     let storage = storage::Storage::new(cfg.data_dir.join("files"));
-    let app = Arc::new(App { db, crypto, storage, cfg, login_attempts: Mutex::default(), _database: database });
+    let app = Arc::new(App { db, crypto, storage, cfg, login_attempts: Mutex::default(), index, _database: database });
     tokio::spawn(reminders::run(app.clone()));
 
     let routes = api().route("/", get(page.clone())).fallback_service(spa).with_state(app);

@@ -36,14 +36,14 @@ const TABS: Options =
 const PROJECT_TABS: Options = &[("", "Files"), ("archived", "Archived")];
 const SORTS: Options =
     &[("name", "Name A-Z"), ("newest", "Newest"), ("oldest", "Oldest"), ("size", "Largest"), ("small", "Smallest")];
-const DRAG_TYPE: &str = "application/x-rustkeep-items";
-const MENU_BTN: &str = "flex gap-3 items-center px-3 w-full h-9 text-sm text-left rounded-md hover:bg-accent";
+pub(crate) const DRAG_TYPE: &str = "application/x-rustkeep-items";
+pub(crate) const MENU_BTN: &str = "flex gap-3 items-center px-3 w-full h-9 text-sm text-left rounded-md hover:bg-accent";
 
 fn raw_url(id: &str) -> String {
     api::url(&format!("/api/files/{id}/raw"))
 }
 
-fn save_file(url: &str, name: &str) {
+pub(crate) fn save_file(url: &str, name: &str) {
     let Ok(link) = document().create_element("a") else { return };
     let _ = link.set_attribute("href", url);
     let _ = link.set_attribute("download", name);
@@ -212,7 +212,7 @@ fn subtree(folders: &[Folder], root: &str) -> Vec<String> {
     ids
 }
 
-fn has_files(ev: &DragEvent) -> bool {
+pub(crate) fn has_files(ev: &DragEvent) -> bool {
     ev.data_transfer().is_some_and(|dt| dt.types().includes(&JsValue::from_str("Files"), 0))
 }
 
@@ -614,7 +614,14 @@ pub fn FileManager(#[prop(optional)] project: Option<Id>, #[prop(optional)] arch
                     <span class="font-medium pointer-events-none">"Drop files to upload them here"</span>
                 </div>
             </Show>
-            <Preview files=shown_files.into() current=d.preview src=Callback::new(|id: String| raw_url(&id)) />
+            <Preview
+                files=shown_files.into()
+                current=d.preview
+                src=Callback::new(|id: String| raw_url(&id))
+                save_path=Callback::new(|id: String| format!("/api/files/{id}/content"))
+                page_path=Callback::new(|id: String| format!("/api/files/{id}/preview"))
+                on_saved=Callback::new(move |()| d.files.refetch())
+            />
             <ItemMenu />
             <Details />
             <Dialogs />
@@ -623,7 +630,7 @@ pub fn FileManager(#[prop(optional)] project: Option<Id>, #[prop(optional)] arch
 }
 
 #[component]
-fn LayoutButton(value: &'static str, current: Signal<String>, on_change: Callback<String>, title: &'static str, children: Children) -> impl IntoView {
+pub(crate) fn LayoutButton(value: &'static str, current: Signal<String>, on_change: Callback<String>, title: &'static str, children: Children) -> impl IntoView {
     let class = move || {
         let state = if current.get() == value { "bg-background text-foreground shadow-sm" } else { "text-muted-foreground hover:text-foreground" };
         format!("flex justify-center items-center rounded-md transition-all size-7 [&_svg]:size-4 {state}")
@@ -935,19 +942,17 @@ fn Item(entry: Entry, grid: bool) -> impl IntoView {
     }
 }
 
+pub(crate) fn menu_position(x: i32, y: i32, height: i32) -> String {
+    let w = window().inner_width().ok().and_then(|v| v.as_f64()).unwrap_or(1024.0) as i32;
+    let h = window().inner_height().ok().and_then(|v| v.as_f64()).unwrap_or(768.0) as i32;
+    format!("left: {}px; top: {}px", x.min(w - 232).max(8), y.min(h - height).max(8))
+}
+
 #[component]
-fn MenuItem(#[prop(into)] label: String, action: Callback<()>, #[prop(optional)] danger: bool, children: Children) -> impl IntoView {
-    let d = use_drive();
+pub(crate) fn MenuItem(#[prop(into)] label: String, action: Callback<()>, #[prop(optional)] danger: bool, children: Children) -> impl IntoView {
     let class = if danger { format!("{MENU_BTN} text-destructive") } else { MENU_BTN.to_owned() };
     view! {
-        <button
-            type="button"
-            class=class
-            on:click=move |_| {
-                d.menu.set(None);
-                action.run(());
-            }
-        >
+        <button type="button" class=class on:click=move |_| action.run(())>
             {children()}
             {label}
         </button>
@@ -960,9 +965,7 @@ fn ItemMenu() -> impl IntoView {
     let target = move || d.menu.get().and_then(|(id, x, y)| untrack(|| d.entry(&id)).map(|e| (e, x, y)));
     view! {
         {move || target().map(|(e, x, y)| {
-            let w = window().inner_width().ok().and_then(|v| v.as_f64()).unwrap_or(1024.0) as i32;
-            let h = window().inner_height().ok().and_then(|v| v.as_f64()).unwrap_or(768.0) as i32;
-            let style = format!("left: {}px; top: {}px", x.min(w - 232).max(8), y.min(h - 460).max(8));
+            let style = menu_position(x, y, 460);
             let e = StoredValue::new(e);
             let act = move |f: fn(Drive, Entry)| Callback::new(move |_| f(d, e.get_value()));
             let is_dir = e.with_value(Entry::is_dir);
@@ -970,7 +973,7 @@ fn ItemMenu() -> impl IntoView {
             let star_label = if e.with_value(Entry::starred) { "Remove from Starred" } else { "Add to Starred" };
             view! {
                 <div class="fixed inset-0 z-40" on:click=move |_| d.menu.set(None) on:contextmenu=move |ev: MouseEvent| { ev.prevent_default(); d.menu.set(None); } />
-                <div class="overflow-y-auto fixed z-50 p-1 w-56 rounded-lg border shadow-lg max-h-[calc(100vh-2rem)] bg-popover text-popover-foreground pop-in [&_svg]:size-4 [&_svg]:text-muted-foreground" style=style>
+                <div class="overflow-y-auto fixed z-50 p-1 w-56 rounded-lg border shadow-lg max-h-[calc(100vh-2rem)] bg-popover text-popover-foreground pop-in [&_svg]:size-4 [&_svg]:text-muted-foreground" style=style on:click=move |_| d.menu.set(None)>
                     <MenuItem label=if is_dir { "Open" } else { "Preview" } action=act(|d, e| d.open(&e))>{if is_dir { view! { <FolderOpen /> }.into_any() } else { view! { <Eye /> }.into_any() }}</MenuItem>
                     <Show when=move || !is_dir>
                         <a class=MENU_BTN href=raw_url(e.with_value(|e| e.id().to_owned()).as_str()) download=e.with_value(|e| e.name().to_owned()) on:click=move |_| d.menu.set(None)>
@@ -1005,7 +1008,7 @@ fn ItemMenu() -> impl IntoView {
 }
 
 #[component]
-fn Row(label: &'static str, children: Children) -> impl IntoView {
+pub(crate) fn Row(label: &'static str, children: Children) -> impl IntoView {
     view! {
         <div class="flex flex-col gap-0.5">
             <span class="text-xs text-muted-foreground">{label}</span>
@@ -1171,7 +1174,7 @@ fn share_dialog(d: Drive, open: RwSignal<bool>, id: &str) -> AnyView {
 }
 
 #[component]
-fn NameDialog(open: RwSignal<bool>, title: &'static str, initial: String, on_submit: Callback<String>) -> impl IntoView {
+pub(crate) fn NameDialog(open: RwSignal<bool>, title: &'static str, initial: String, on_submit: Callback<String>) -> impl IntoView {
     let name = RwSignal::new(initial);
     let field = NodeRef::<html::Input>::new();
     Effect::new(move |_| {

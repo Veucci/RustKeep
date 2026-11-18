@@ -12,11 +12,11 @@ pub use components::*;
 #[component]
 pub fn Switch(
     #[prop(optional, into)] id: String,
-    #[prop(optional, default = false)] checked: bool,
+    checked: RwSignal<bool>,
     #[prop(into, optional, default = "Toggle switch".to_string())] aria_label: String,
     #[prop(into, optional)] class: String,
 ) -> impl IntoView {
-    let is_checked = RwSignal::new(checked);
+    let is_checked = checked;
     let state = move || if is_checked.get() { "checked" } else { "unchecked" };
 
     let track_class = tw_merge!(

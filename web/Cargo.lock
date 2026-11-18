@@ -2015,6 +2015,7 @@ dependencies = [
  "time",
  "tw_merge",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "web-sys",
 ]
 

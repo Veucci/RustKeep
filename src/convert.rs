@@ -41,6 +41,23 @@ const MIME: &[(&str, &str)] = &[
     ("csv", "text/csv"),
     ("json", "application/json"),
     ("wav", "audio/wav"),
+    ("jpeg", "image/jpeg"),
+    ("htm", "text/html"),
+    ("css", "text/css"),
+    ("js", "text/javascript"),
+    ("mjs", "text/javascript"),
+    ("svg", "image/svg+xml"),
+    ("woff", "font/woff"),
+    ("woff2", "font/woff2"),
+    ("ttf", "font/ttf"),
+    ("otf", "font/otf"),
+    ("mp4", "video/mp4"),
+    ("webm", "video/webm"),
+    ("mp3", "audio/mpeg"),
+    ("wasm", "application/wasm"),
+    ("webmanifest", "application/manifest+json"),
+    ("map", "application/json"),
+    ("xml", "application/xml"),
 ];
 
 #[derive(Clone, Copy)]

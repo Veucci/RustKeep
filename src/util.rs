@@ -7,7 +7,9 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;
 use chacha20poly1305::aead::{Aead, AeadCore, KeyInit, OsRng};
 use chacha20poly1305::{ChaCha20Poly1305, Nonce};
+use hmac::{Hmac, Mac};
 use libsql::Connection;
+use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
 
@@ -60,6 +62,14 @@ pub fn uuid() -> String {
     format!("{}-{}-{}-{}-{}", &h[..8], &h[8..12], &h[12..16], &h[16..20], &h[20..])
 }
 
+pub const PREVIEW_SECS: i64 = 3600;
+
+const URL_PATH: &AsciiSet = &NON_ALPHANUMERIC.remove(b'-').remove(b'.').remove(b'_').remove(b'~').remove(b'/');
+
+pub fn encode_path(path: &str) -> String {
+    utf8_percent_encode(path, URL_PATH).to_string()
+}
+
 pub fn esc(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
@@ -105,11 +115,32 @@ pub fn verify(p: &str, h: &str) -> bool {
     PasswordHash::new(h).is_ok_and(|h| argon().verify_password(p.as_bytes(), &h).is_ok())
 }
 
-pub struct Crypto(ChaCha20Poly1305);
+pub struct Crypto(ChaCha20Poly1305, Vec<u8>);
 
 impl Crypto {
     pub fn new(secret: &str) -> Self {
-        Self(ChaCha20Poly1305::new_from_slice(&Sha256::digest(secret)).expect("key"))
+        let cipher = ChaCha20Poly1305::new_from_slice(&Sha256::digest(secret)).expect("key");
+        Self(cipher, Sha256::digest(format!("mac:{secret}")).to_vec())
+    }
+
+    pub fn mac(&self, data: &[u8]) -> Hmac<Sha256> {
+        let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&self.1).expect("HMAC accepts any key length");
+        mac.update(data);
+        mac
+    }
+
+    pub fn sign_preview(&self, kind: &str, scope: &str, expires: i64) -> String {
+        let sig = self.mac(format!("preview:{kind}:{scope}:{expires}").as_bytes()).finalize().into_bytes();
+        format!("{scope}.{expires}.{}", hex::encode(sig))
+    }
+
+    pub fn check_preview(&self, kind: &str, token: &str, now: i64) -> Option<String> {
+        let mut parts = token.rsplitn(3, '.');
+        let (sig, expires, scope) = (parts.next()?, parts.next()?, parts.next()?);
+        let fresh = expires.parse::<i64>().is_ok_and(|e| e > now);
+        let sig = hex::decode(sig).ok().filter(|_| fresh)?;
+        self.mac(format!("preview:{kind}:{scope}:{expires}").as_bytes()).verify_slice(&sig).ok()?;
+        Some(scope.to_owned())
     }
 
     pub fn seal(&self, plain: &str) -> String {
@@ -160,6 +191,20 @@ mod tests {
         let s = c.seal("secret");
         assert_eq!(c.open(&s).ok().as_deref(), Some("secret"));
         assert!(Crypto::new("other").open(&s).is_err());
+    }
+
+    #[test]
+    fn preview_tokens() {
+        let c = Crypto::new("k");
+        let t = c.sign_preview("f", "user:root", 1000);
+        assert_eq!(c.check_preview("f", &t, 999).as_deref(), Some("user:root"));
+        assert!(c.check_preview("f", &t, 1000).is_none());
+        assert!(c.check_preview("s", &t, 999).is_none());
+        assert!(Crypto::new("other").check_preview("f", &t, 999).is_none());
+        assert!(c.check_preview("f", &t.replace("user:root", "user:other"), 999).is_none());
+        assert!(c.check_preview("f", &t.replacen("1000", "2000", 1), 999).is_none());
+        assert!(c.check_preview("f", "garbage", 0).is_none());
+        assert_eq!(encode_path("a b/c#d.html"), "a%20b/c%23d.html");
     }
 
     #[test]

@@ -60,7 +60,7 @@ fn link_url(token: &str) -> String {
     api::absolute(&format!("/u/{token}"))
 }
 
-fn local_input(ts: i64) -> String {
+pub fn local_input(ts: i64) -> String {
     let d = js_sys::Date::new(&JsValue::from_f64(ts as f64 * 1000.0));
     format!("{:04}-{:02}-{:02}T{:02}:{:02}", d.get_full_year(), d.get_month() + 1, d.get_date(), d.get_hours(), d.get_minutes())
 }

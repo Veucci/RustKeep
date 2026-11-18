@@ -1,4 +1,5 @@
 use axum::Json;
+use axum::body::Bytes;
 use axum::extract::{Multipart, Path, Query, Request};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::Response;
@@ -6,11 +7,12 @@ use libsql::params;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::auth::User;
+use crate::auth::{User, unix_now};
 use crate::convert;
 use crate::images;
 use crate::markdown::Images;
-use crate::util::{Res, all, archive_set, bad, err, exec, one, token, uuid};
+use crate::sites::{self, PreviewTarget};
+use crate::util::{PREVIEW_SECS, Res, all, archive_set, bad, encode_path, err, exec, not_found, one, token, uuid};
 use crate::{App, St};
 
 #[derive(Deserialize)]
@@ -297,6 +299,58 @@ pub async fn public_raw(app: St, Path(t): Path<String>, req: Request) -> Res<Res
     serve(&app, f, req).await
 }
 
+pub async fn preview(app: St, user: User, Path(id): Path<String>) -> Res<Json<Value>> {
+    let f: Original = one(&app.db, "SELECT name, key, size, project_id, folder_id FROM files WHERE id = ?1 AND user_id = ?2", params![id.as_str(), user.id.as_str()]).await?;
+    let scope = format!("{}:{}", user.id, f.folder_id.as_deref().unwrap_or("root"));
+    let token = app.crypto.sign_preview("f", &scope, unix_now() + PREVIEW_SECS);
+    Ok(Json(json!({ "url": format!("/preview/f/{token}/{}", encode_path(&f.name)) })))
+}
+
+fn preview_segments(path: &str) -> Option<(&str, Vec<&str>)> {
+    let mut parts: Vec<&str> = path.split('/').collect();
+    let valid = parts.iter().all(|p| !matches!(*p, "" | "." | ".."));
+    let name = parts.pop().filter(|_| valid)?;
+    Some((name, parts))
+}
+
+pub async fn preview_serve(app: St, Path(t): Path<PreviewTarget>, req: Request) -> Res<Response> {
+    let scope = app.crypto.check_preview("f", &t.token, unix_now()).ok_or_else(not_found)?;
+    let (user, root) = scope.split_once(':').ok_or_else(not_found)?;
+    let (name, dirs) = preview_segments(&t.path).ok_or_else(not_found)?;
+    let mut folder = Some(root.to_owned()).filter(|r| r != "root");
+    for dir in dirs {
+        let child: Key = one(
+            &app.db,
+            "SELECT id AS key FROM folders WHERE user_id = ?1 AND parent_id IS ?2 AND name = ?3 ORDER BY created DESC LIMIT 1",
+            params![user, folder.as_deref(), dir],
+        )
+        .await?;
+        folder = Some(child.key);
+    }
+    let f: Stored = one(
+        &app.db,
+        "SELECT name, mime, key FROM files WHERE user_id = ?1 AND folder_id IS ?2 AND name = ?3 ORDER BY archived, created DESC LIMIT 1",
+        params![user, folder, name],
+    )
+    .await?;
+    let generic = matches!(f.mime.as_str(), "" | "application/octet-stream");
+    let mime = if generic { sites::mime_of(&f.name).to_owned() } else { f.mime };
+    sites::send(&app, &sites::Stored { key: f.key, mime }, req, StatusCode::OK).await
+}
+
+pub async fn put_content(app: St, user: User, Path(id): Path<String>, body: Bytes) -> Res<Json<Value>> {
+    let old: Key = one(&app.db, "SELECT key FROM files WHERE id = ?1 AND user_id = ?2", params![id.as_str(), user.id.as_str()]).await?;
+    let key = token();
+    let size = app.storage.save_bytes(&key, &body).await?;
+    let updated = exec(&app.db, "UPDATE files SET key = ?1, size = ?2 WHERE id = ?3 AND user_id = ?4", params![key.as_str(), size, id.as_str(), user.id.as_str()]).await;
+    if let Err(e) = updated {
+        app.storage.remove(&key).await;
+        return Err(e);
+    }
+    app.storage.remove(&old.key).await;
+    Ok(Json(json!({ "ok": true, "size": size })))
+}
+
 pub async fn update(app: St, user: User, Path(id): Path<String>, Json(r): Json<Edit>) -> Res<Json<Value>> {
     if taken(&app, &user.id, r.parent.as_deref(), r.clean_name()?, &id).await?.is_some() {
         return Err(err(StatusCode::CONFLICT, "A file with this name already exists in this folder"));
@@ -354,7 +408,18 @@ pub async fn unshare(app: St, user: User, Path(id): Path<String>) -> Res<Json<Va
 
 #[cfg(test)]
 mod tests {
-    use super::numbered;
+    use super::{numbered, preview_segments};
+
+    #[test]
+    fn preview_paths_stay_inside_folder() {
+        assert_eq!(preview_segments("index.html"), Some(("index.html", vec![])));
+        assert_eq!(preview_segments("css/a.css"), Some(("a.css", vec!["css"])));
+        assert_eq!(preview_segments("../a.css"), None);
+        assert_eq!(preview_segments("css/./a.css"), None);
+        assert_eq!(preview_segments("css//a.css"), None);
+        assert_eq!(preview_segments("css/"), None);
+        assert_eq!(preview_segments(""), None);
+    }
 
     #[test]
     fn numbers_duplicate_names() {

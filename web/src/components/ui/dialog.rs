@@ -1,3 +1,6 @@
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use icons::X;
 use leptos::context::Provider;
 use leptos::prelude::*;
@@ -266,14 +269,13 @@ pub fn ControlledDialog(
     let state = move || if open.get() { "open" } else { "closed" };
     let pointer_events = move || if open.get() { "pointer-events: auto;" } else { "pointer-events: none;" };
 
-    Effect::new(move |was_open: Option<bool>| {
+    let holds_lock = Arc::new(AtomicBool::new(false));
+    let effect_lock = holds_lock.clone();
+    Effect::new(move |_| {
         let is_open = open.get();
-        if is_open {
-            use_scroll_lock::lock();
-        } else if was_open == Some(true) {
-            use_scroll_lock::unlock(200);
+        if is_open != effect_lock.swap(is_open, Ordering::Relaxed) {
+            if is_open { use_scroll_lock::lock() } else { use_scroll_lock::unlock(200) }
         }
-        is_open
     });
     let content = NodeRef::<leptos::html::Div>::new();
     let escape = window_event_listener(leptos::ev::keydown, move |ev| {
@@ -284,7 +286,7 @@ pub fn ControlledDialog(
     });
     on_cleanup(move || {
         escape.remove();
-        if open.try_get_untracked() == Some(true) {
+        if holds_lock.swap(false, Ordering::Relaxed) {
             use_scroll_lock::unlock(0);
         }
     });

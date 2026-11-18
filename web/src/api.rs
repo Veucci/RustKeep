@@ -37,10 +37,10 @@ pub fn absolute(path: &str) -> String {
     format!("{}{}", window().location().origin().unwrap_or_default(), url(path))
 }
 
-async fn read<T: DeserializeOwned>(res: Result<Response, gloo_net::Error>) -> ApiResult<T> {
+async fn checked(res: Result<Response, gloo_net::Error>) -> ApiResult<Response> {
     let res = res.map_err(|e| ApiError { status: 0, msg: e.to_string() })?;
     if res.ok() {
-        return res.json().await.map_err(|e| ApiError { status: 0, msg: e.to_string() });
+        return Ok(res);
     }
     let status = res.status();
     let msg = res
@@ -50,6 +50,19 @@ async fn read<T: DeserializeOwned>(res: Result<Response, gloo_net::Error>) -> Ap
         .and_then(|v| v["error"].as_str().map(str::to_owned))
         .unwrap_or_else(|| format!("Request failed ({status})"));
     Err(ApiError { status, msg })
+}
+
+async fn read<T: DeserializeOwned>(res: Result<Response, gloo_net::Error>) -> ApiResult<T> {
+    checked(res).await?.json().await.map_err(|e| ApiError { status: 0, msg: e.to_string() })
+}
+
+pub async fn get_text(path: &str) -> ApiResult<String> {
+    checked(Request::get(&url(path)).send().await).await?.text().await.map_err(|e| ApiError { status: 0, msg: e.to_string() })
+}
+
+pub async fn put_text<T: DeserializeOwned>(path: &str, text: &str) -> ApiResult<T> {
+    let req = Request::put(&url(path)).body(text).map_err(|e| ApiError { status: 0, msg: e.to_string() })?;
+    read(req.send().await).await
 }
 
 pub async fn get<T: DeserializeOwned>(path: &str) -> ApiResult<T> {

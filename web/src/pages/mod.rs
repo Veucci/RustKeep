@@ -13,5 +13,8 @@ pub mod requests;
 pub mod shared;
 pub mod shared_board;
 pub mod shared_folder;
+pub mod site_files;
+pub mod site_gate;
+pub mod sites;
 pub mod upload;
 pub mod vault;

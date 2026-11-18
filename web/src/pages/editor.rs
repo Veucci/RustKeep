@@ -2,7 +2,7 @@ use icons::{
     Archive, ArchiveRestore, ArrowLeft, Bell, Bold, Code, Download, ExternalLink, FileText, Heading1, Heading2, ImagePlus, Italic, Link, List,
     ListChecks, ListOrdered, Pin, PinOff, Quote, Share2, Strikethrough, Trash2, X,
 };
-use leptos::ev::{ClipboardEvent, DragEvent, MouseEvent, SubmitEvent};
+use leptos::ev::{ClipboardEvent, DragEvent, KeyboardEvent, MouseEvent, SubmitEvent};
 use leptos::html;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -569,6 +569,74 @@ pub fn RichEditor(
                     on:drop=on_drop
                 />
             </div>
+        </div>
+    }
+}
+
+#[component]
+pub fn CodeEditor(text: RwSignal<String>, #[prop(into, optional)] class: String) -> impl IntoView {
+    let area = NodeRef::<html::Textarea>::new();
+    let gutter = NodeRef::<html::Pre>::new();
+    let lines = Memo::new(move |_| text.with(|t| t.matches('\n').count() + 1));
+    let numbers = move || (1..=lines.get()).map(|n| n.to_string()).collect::<Vec<_>>().join("\n");
+    let indent = move |ev: KeyboardEvent| {
+        if ev.key() == "Tab" && !ev.shift_key() {
+            ev.prevent_default();
+            exec("insertText", "  ");
+        }
+    };
+    let follow_scroll = move |_| {
+        if let Some((area, gutter)) = area.get_untracked().zip(gutter.get_untracked()) {
+            gutter.set_scroll_top(area.scroll_top());
+        }
+    };
+    view! {
+        <div class=format!("flex overflow-hidden rounded-md border shadow-xs resize-y border-input text-foreground focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/50 {class}")>
+            <pre
+                node_ref=gutter
+                aria-hidden="true"
+                class="overflow-hidden px-3 pt-2 pb-8 font-mono text-xs leading-5 text-right border-r select-none shrink-0 text-muted-foreground bg-muted/40"
+            >
+                {numbers}
+            </pre>
+            <textarea
+                node_ref=area
+                spellcheck="false"
+                autocapitalize="off"
+                autocomplete="off"
+                wrap="off"
+                aria-label="File contents"
+                class="overflow-auto flex-1 py-2 px-3 min-w-0 font-mono text-xs leading-5 whitespace-pre bg-transparent outline-none resize-none"
+                prop:value=move || text.get()
+                on:input=move |ev| text.set(event_target_value(&ev))
+                on:keydown=indent
+                on:scroll=follow_scroll
+            />
+        </div>
+    }
+}
+
+#[component]
+pub fn FileEditor(markdown: bool, text: RwSignal<String>, on_save: Callback<()>, #[prop(into, optional)] class: String) -> impl IntoView {
+    let shortcut = move |ev: KeyboardEvent| {
+        if (ev.ctrl_key() || ev.meta_key()) && ev.key().eq_ignore_ascii_case("s") {
+            ev.prevent_default();
+            on_save.run(());
+        }
+    };
+    let editor = if markdown {
+        view! {
+            <div class=format!("overflow-auto p-3 rounded-lg text-foreground {class}")>
+                <RichEditor body=text on_change=Callback::new(|()| ()) compact=true height="min-h-[50vh]" />
+            </div>
+        }
+        .into_any()
+    } else {
+        view! { <CodeEditor text class /> }.into_any()
+    };
+    view! {
+        <div class="contents" on:keydown=shortcut>
+            {editor}
         </div>
     }
 }
