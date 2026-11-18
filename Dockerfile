@@ -1,4 +1,4 @@
-FROM rust:1-alpine AS server
+FROM rust:1.100-alpine AS server
 RUN apk add --no-cache build-base
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
@@ -11,7 +11,7 @@ FROM node:22-bookworm-slim AS web
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates build-essential gzip \
     && rm -rf /var/lib/apt/lists/*
 ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo PATH=/usr/local/cargo/bin:$PATH
-RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain nightly-2026-10-04 --target wasm32-unknown-unknown \
+RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.100.0 --target wasm32-unknown-unknown \
     && curl -sSfLo /tmp/trunk.tgz https://github.com/trunk-rs/trunk/releases/download/v0.21.14/trunk-x86_64-unknown-linux-gnu.tar.gz \
     && echo "f2b4680cd239693a646a2795e4633c625328d7b2a044fbe749fa3a2fe9e7036b  /tmp/trunk.tgz" | sha256sum -c - \
     && tar xzf /tmp/trunk.tgz -C /usr/local/cargo/bin && rm /tmp/trunk.tgz

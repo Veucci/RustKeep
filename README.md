@@ -5,7 +5,7 @@
 Self-hosted notes, files, API key vault, reminders and lightweight project boards.
 
 - `./` - server: axum + libSQL (local SQLite file or Turso), single-threaded tokio runtime. Uploaded files are stored on local disk by default, or optionally in Amazon S3 or any S3 compatible storage such as Cloudflare R2 (see [Configuration](#configuration)).
-- `web/` - client: Leptos CSR (nightly) with [rust-ui](https://github.com/rust-ui/ui) components and Tailwind v4.
+- `web/` - client: Leptos CSR (stable Rust) with [rust-ui](https://github.com/rust-ui/ui) components and Tailwind v4.
 
 ## Screenshots
 

@@ -25,12 +25,13 @@ mod util;
 mod vault;
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
-use axum::response::{Html, Redirect};
+use axum::http::{StatusCode, Uri, header};
+use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{delete, get, post, put};
 use tower_http::services::ServeDir;
 
@@ -192,6 +193,13 @@ async fn open_db(data_dir: &std::path::Path) -> libsql::Database {
     built.expect("open database")
 }
 
+fn spa_page(index: &str, uri: &Uri) -> Response {
+    if Path::new(uri.path()).extension().is_some() {
+        return (StatusCode::NOT_FOUND, [(header::CACHE_CONTROL, "no-store")]).into_response();
+    }
+    Html(index.to_owned()).into_response()
+}
+
 fn api() -> Router<Arc<App>> {
     Router::new()
         .route("/api/auth/register", post(signup::register))
@@ -330,7 +338,10 @@ async fn main() {
     let spa = ServeDir::new(static_dir)
         .precompressed_gzip()
         .append_index_html_on_directories(false)
-        .fallback(get(page.clone()));
+        .fallback(get({
+            let index = index.clone();
+            move |uri: Uri| std::future::ready(spa_page(&index, &uri))
+        }));
 
     let port = env("PORT").unwrap_or_else(|| "8080".into());
     let base = cfg.base.clone();
@@ -353,4 +364,18 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}")).await.expect("bind");
     println!("RustKeep listening on :{port}{base}");
     axum::serve(listener, routes.into_make_service_with_connect_info::<std::net::SocketAddr>()).await.expect("serve");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spa_page_serves_index_for_routes_and_404_for_missing_assets() {
+        let status = |path: &str| spa_page("index", &path.parse().unwrap()).status();
+        assert_eq!(status("/notes/0b5c"), StatusCode::OK);
+        assert_eq!(status("/s/abc_DEF-123"), StatusCode::OK);
+        assert_eq!(status("/output-163047b258112fe9.css"), StatusCode::NOT_FOUND);
+        assert_eq!(status("/web-f826d70aaa6867d9_bg.wasm"), StatusCode::NOT_FOUND);
+    }
 }
