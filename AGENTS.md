@@ -46,3 +46,14 @@ Rules for any agent or contributor working on this repository. These rules apply
   - Changes to stored formats (JSON shapes, enum values, encrypted payloads, file paths) must stay readable for already stored records or convert them during migration.
 - Before changing any schema, think through what the automatic migration will do to existing rows and make sure every record survives.
 - When in doubt, keep the old data and ask instead of deleting it.
+
+## 7. Rust skills
+
+- Before writing, changing, or refactoring any Rust code (backend or `web/`), load the `rust-best-practices` skill and follow it.
+- When asked to review, audit, or check Rust code, a diff, or a PR, use the `rust-review` skill.
+- The rules in this file override the skills where they conflict:
+  - No comments of any kind, so skip the skill's rustdoc, `// SAFETY:`, and explanatory-comment advice.
+  - No `unsafe`, so the skill's unsafe and FFI section never applies.
+  - This is application code: follow the skill's application rules (concrete types, simple signatures), not its library API rules.
+  - Keep the current single-crate layout and do not add dependencies (`anyhow`, `thiserror`, `derive_more`, `bitflags`, ...) only to satisfy a skill rule; ask first.
+- Before handing back Rust changes, run `cargo fmt`, `cargo clippy --all-targets`, and `cargo test` in the crate you touched and fix what your change introduced.

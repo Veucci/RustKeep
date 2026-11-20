@@ -70,6 +70,22 @@ docker run -p 8080:8080 -v rustkeep-data:/data --env-file .env rustkeep
 
 ## Local development
 
+Use dev builds while working. The release profiles use full LTO with one codegen unit, so even a one-line change takes minutes to rebuild (about 3 minutes for the server and 2 for the client), while a dev rebuild takes a few seconds.
+
+```bash
+cd web && npm install && trunk watch
+```
+
+In a second terminal:
+
+```bash
+cargo run
+```
+
+`trunk watch` rebuilds `web/dist` on every change and the server serves it from disk, so a browser reload picks up client changes. Restart `cargo run` after server changes.
+
+To run an optimized build locally, as the Docker image does:
+
 ```bash
 cd web && npm install && trunk build --release && cd ..
 cargo run --release
